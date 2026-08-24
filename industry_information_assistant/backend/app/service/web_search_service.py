@@ -1,5 +1,3 @@
-# Copyright © 2026 深圳市深维智见教育科技有限公司 版权所有
-# 未经授权，禁止转售或仿制。
 
 import http.client
 import json
@@ -10,14 +8,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class WebSearchService:
-    """Service for performing web searches using the Serper API"""
+    """ 使用 Serper API 执行网络搜索的服务 """
     
     def __init__(self, api_key: str = None):
         """
-        Initialize the WebSearchService with API key.
+        使用 API 密钥初始化 WebSearchService。
         
-        Args:
-            api_key: API key for Serper.dev. If not provided, will attempt to read from environment.
+        参数:
+            api_key: Serper.dev 的 API 密钥。如果未提供，将尝试从环境变量中读取。
         """
         self.api_key = api_key or os.environ.get('SERPER_API_KEY')
         self.host = "google.serper.dev"
@@ -34,18 +32,18 @@ class WebSearchService:
               page: int = 1,
               search_type: str = "search") -> Dict[str, Any]:
         """
-        Perform a web search using Serper API.
+        使用 Serper API 执行网络搜索。
         
-        Args:
-            query: Search query text
-            gl: Google country code (default: "us")
-            hl: Language code (default: "en")
-            autocorrect: Whether to enable autocorrection (default: True)
-            page: Search result page number (default: 1)
-            search_type: Type of search (default: "search")
+        参数:
+            query:        搜索查询文本
+            gl:           Google 国家代码（默认: "us"）
+            hl:           语言代码（默认: "en"）
+            autocorrect:  是否启用自动纠错（默认: True）
+            page:         搜索结果页码（默认: 1）
+            search_type:  搜索类型（默认: "search"）
             
-        Returns:
-            Search results as a dictionary
+        返回:
+            搜索结果的字典
         """
         conn = http.client.HTTPSConnection(self.host)
         
@@ -73,13 +71,13 @@ class WebSearchService:
     
     def extract_search_results(self, search_results: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
-        Extract formatted search results from the API response.
+        从 API 响应中提取格式化后的搜索结果。
         
-        Args:
-            search_results: Full API response from search method
+        参数:
+            search_results: 来自 search 方法的完整 API 响应
             
-        Returns:
-            List of simplified search result items
+        返回:
+            简化后的搜索结果项列表
         """
         results = []
         

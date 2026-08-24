@@ -1,19 +1,18 @@
-# Copyright © 2026 深圳市深维智见教育科技有限公司 版权所有
-# 未经授权，禁止转售或仿制。
+
 
 """聊天附件路由"""
 import os
 import shutil
-from typing import List, Optional
+from typing import Optional
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, BackgroundTasks, Form
-from sqlalchemy.orm import Session
 
 from core.database import get_db
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, BackgroundTasks, Form
 from models.chat import ChatAttachment, ChatSession
 from models.user import User
 from router.auth_router import get_current_user
 from schemas.chat import AttachmentResponse, AttachmentListResponse
+from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/attachments", tags=["聊天附件"])
 

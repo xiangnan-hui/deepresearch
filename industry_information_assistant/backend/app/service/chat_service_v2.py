@@ -1,5 +1,4 @@
-# Copyright © 2026 深圳市深维智见教育科技有限公司 版权所有
-# 未经授权，禁止转售或仿制。
+
 
 from typing import List, Dict, Any
 from .chat_service import ChatService
@@ -11,32 +10,35 @@ import json
 
 
 class ChatServiceV2(ChatService):
-    """Chat service that extends ChatService to use PolicySearchService for knowledge base retrieval"""
+    """聊天服务，扩展了 ChatService，使用 PolicySearchService 进行知识库检索"""
     
     def __init__(self, document_service: DocumentService, web_search_service: WebSearchService, 
                  session_service: SessionService, policy_search_service: PolicySearchService):
+
         """
-        Initialize the ChatServiceV2.
+        初始化 ChatServiceV2。
+
+        参数:
+        document_service: 文档服务，用于知识库检索 （备用方案）
+        web_search_service: 网络搜索服务，用于互联网搜索
+        session_service: 会话服务，用于聊天历史记录管理
+        policy_search_service: 政策搜索服务，用于政策文档检索
         
-        Args:
-            document_service: Document service for knowledge base retrieval (fallback)
-            web_search_service: Web search service for internet search
-            session_service: Session service for chat history management
-            policy_search_service: Policy search service for policy document retrieval
         """
+
         super().__init__(document_service, web_search_service, session_service)
         self.policy_search_service = policy_search_service
     
     def retrieve_from_policy_documents(self, question: str, top_n: int = 10) -> List[Dict[str, Any]]:
         """
-        Retrieve documents from policy document index using hybrid search.
+        使用混合搜索从政策文档索引中检索文档。
         
-        Args:
-            question: User question
-            top_n: Number of results to retrieve
+        参数:
+            question: 用户问题
+            top_n:     要检索的结果数量
             
-        Returns:
-            List of retrieved documents
+        返回:
+            检索到的文档列表
         """
         try:
             print(f"\n{'='*50}")
