@@ -170,7 +170,7 @@ URL: {url}
         llm_api_key: str,
         llm_base_url: str,
         search_api_key: str,
-        model: str = "qwen3.7-plus"
+        model: str = None
     ):
         super().__init__(
             name="DeepScout",
@@ -183,6 +183,16 @@ URL: {url}
         self.search_cache: Dict[str, List] = {}
         self.fact_fingerprints: Dict[str, str] = {}  # 事实指纹用于去重
 
+        # 搜索服务配置（从统一配置读取，兼容直接运行脚本）
+        try:
+            from config.settings import settings
+        except ImportError:
+            try:
+                from app.config.settings import settings
+            except ImportError:
+                settings = None
+        self._settings = settings
+
         # 初始化本地知识库搜索服务
         self.milvus_service = None
         if MILVUS_AVAILABLE:
@@ -191,6 +201,18 @@ URL: {url}
                 self.logger.info("Milvus service initialized for local knowledge base search")
             except Exception as e:
                 self.logger.warning(f"Failed to initialize Milvus service: {e}")
+
+    def _get_bocha_base_url(self) -> str:
+        """博查搜索 API 地址（统一配置）"""
+        if self._settings:
+            return self._settings.bocha_base_url
+        return ""
+
+    def _get_bocha_timeout(self) -> float:
+        """博查搜索请求超时（统一配置）"""
+        if self._settings:
+            return self._settings.bocha_request_timeout
+        return 30.0
 
     async def process(self, state: ResearchState) -> ResearchState:
         """处理入口"""
@@ -1065,7 +1087,7 @@ URL: {url}
             return self.search_cache[cache_key]
 
         try:
-            url = "https://api.bocha.cn/v1/web-search"
+            url = self._get_bocha_base_url()
             payload = {
                 "query": query,
                 "summary": True,
@@ -1084,7 +1106,7 @@ URL: {url}
                 url,
                 headers=headers,
                 json=payload,
-                timeout=30
+                timeout=self._get_bocha_timeout()
             )
 
             if response.status_code != 200:

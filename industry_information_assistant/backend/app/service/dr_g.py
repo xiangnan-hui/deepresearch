@@ -24,14 +24,23 @@ from collections import Counter
 import logging
 
 # --- Configuration ---
-SEARCH_API_KEY = os.getenv("BOCHA_API_KEY", "Bearer sk-392ef5953eaa4c43be43e6daab4e82a4")
-LLM_API_KEY = os.getenv("DASHSCOPE_API_KEY", "sk-f02db5a079ab41588b1cab09ad2777a2")
-LLM_BASE_URL = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+# 所有配置均来自统一配置模块（backend/.env 环境变量），不在此处硬编码任何密钥
+try:
+    from config.settings import settings
+except ImportError:
+    try:
+        from app.config.settings import settings
+    except ImportError:
+        raise ImportError("无法导入统一配置模块 config.settings")
 
-# 优化配置
-MAX_CONCURRENT_SEARCHES = 3
-SEARCH_CACHE_TTL = 3600
-CONTENT_SIMILARITY_THRESHOLD = 0.8
+SEARCH_API_KEY = settings.bocha_api_key
+LLM_API_KEY = settings.dashscope_api_key
+LLM_BASE_URL = settings.dashscope_base_url
+
+# 优化配置（环境变量可覆盖）
+MAX_CONCURRENT_SEARCHES = settings.research_max_concurrent_searches
+SEARCH_CACHE_TTL = settings.research_search_cache_ttl
+CONTENT_SIMILARITY_THRESHOLD = settings.research_content_similarity_threshold
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -137,7 +146,8 @@ class ResearchService:
         self.search_api_key = search_api_key or SEARCH_API_KEY
         self.llm_api_key = llm_api_key or LLM_API_KEY
         self.llm_base_url = llm_base_url or LLM_BASE_URL
-        self.db_connection_string = db_connection_string
+        # 未传入时使用统一配置中的 PostgreSQL 连接串（用于 Text2SQL）
+        self.db_connection_string = db_connection_string or settings.sqlalchemy_database_url
         self.use_react = use_react
 
         # 初始化 ReAct 组件
@@ -158,8 +168,8 @@ class ResearchService:
                 tools=tools,
                 llm_api_key=self.llm_api_key,
                 llm_base_url=self.llm_base_url,
-                max_steps=10,
-                model="qwen3.7-plus"
+                max_steps=settings.react_max_steps,
+                model=settings.dashscope_model
             )
 
             # 创建工具执行器
@@ -598,7 +608,7 @@ class ResearchService:
         try:
             stream = await self._run_sync(
                 lambda: client.chat.completions.create(
-                    model="deepseek-r1",
+                    model=settings.research_synthesis_model,
                     messages=[
                         {'role': 'system', 'content': 'You are an expert research assistant.'},
                         {'role': 'user', 'content': synthesis_prompt}
@@ -733,7 +743,7 @@ async def search_local_knowledge(query: str, kb_name: str, top_k: int = 5) -> Li
 
 def websearch(query, count=5):
     """执行网络搜索"""
-    url = "https://api.bochaai.com/v1/web-search"
+    url = settings.bocha_base_url
     payload = json.dumps({
         "query": query,
         "summary": True,
@@ -746,7 +756,7 @@ def websearch(query, count=5):
     }
 
     try:
-        response = requests.post(url, headers=headers, data=payload, timeout=25)
+        response = requests.post(url, headers=headers, data=payload, timeout=settings.bocha_request_timeout)
         response.raise_for_status()
         data = response.json()
     except Exception as e:
@@ -765,8 +775,10 @@ def websearch(query, count=5):
     ]
 
 
-def qwen_llm(prompt, model="qwen3.7-plus", response_format=None, system_message_content="You are a helpful assistant."):
+def qwen_llm(prompt, model=None, response_format=None, system_message_content="You are a helpful assistant."):
     """调用 Qwen LLM"""
+    if model is None:
+        model = settings.dashscope_model
     logging.info(f"Calling Qwen LLM: {prompt[:100]}...")
     try:
         client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)

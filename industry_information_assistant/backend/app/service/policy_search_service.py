@@ -1,7 +1,6 @@
 
 
 """基于 Milvus 的政策文档搜索服务"""
-import os
 from typing import List, Dict, Any, Optional
 from pymilvus import (
     connections,
@@ -11,18 +10,19 @@ from pymilvus import (
     DataType,
     utility,
 )
+from config.settings import settings
 from service.embedding_service import generate_embedding
 
 
 class PolicySearchService:
     """政策文档搜索服务类 - 基于 Milvus"""
 
-    def __init__(self, collection_name: str = "policy_documents"):
+    def __init__(self, collection_name: str = None):
         """初始化 Milvus 连接"""
-        self.host = os.getenv("MILVUS_HOST", "localhost")
-        self.port = int(os.getenv("MILVUS_PORT", "19530"))
-        self.collection_name = collection_name
-        self.vector_dim = 1024
+        self.host = settings.milvus_host
+        self.port = settings.milvus_port
+        self.collection_name = collection_name or settings.policy_collection
+        self.vector_dim = settings.embedding_dimensions
         self._connect()
 
     def _connect(self):

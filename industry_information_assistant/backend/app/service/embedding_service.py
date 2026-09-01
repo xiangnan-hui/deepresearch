@@ -8,7 +8,6 @@ Embedding 服务 - 使用阿里 DashScope
 2. rerank_similarity - 使用 DashScope Rerank 重排序
 """
 
-import os
 from typing import List, Optional, Tuple
 import numpy as np
 from openai import OpenAI
@@ -16,18 +15,17 @@ from llama_index.core.data_structs import Node
 from llama_index.core.schema import NodeWithScore
 from llama_index.postprocessor.dashscope_rerank import DashScopeRerank
 
-from dotenv import load_dotenv
-load_dotenv()
+from config.settings import settings
 
 
 def generate_embedding(
     text: str | List[str],
     api_key: str = None,
     base_url: str = None,
-    model_name: str = "text-embedding-v4",
-    dimensions: int = 1024,
+    model_name: str = None,
+    dimensions: int = None,
     encoding_format: str = "float",
-    max_batch_size: int = 10
+    max_batch_size: int = None
 ) -> Optional[List[float] | List[List[float]]]:
     """
     生成文本的向量嵌入（使用阿里 text-embedding-v4）
@@ -44,8 +42,12 @@ def generate_embedding(
     Returns:
         单个文本时返回向量，文本列表时返回向量列表
     """
-    api_key = api_key or os.getenv("DASHSCOPE_API_KEY")
-    base_url = base_url or os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+    # 未显式传入时使用统一配置（环境变量）
+    api_key = api_key or settings.dashscope_api_key
+    base_url = base_url or settings.dashscope_base_url
+    model_name = model_name or settings.embedding_model
+    dimensions = dimensions or settings.embedding_dimensions
+    max_batch_size = max_batch_size or settings.embedding_max_batch_size
 
     if not api_key:
         print("错误: 缺少 DASHSCOPE_API_KEY 环境变量")
@@ -112,7 +114,7 @@ def rerank_similarity(
     Returns:
         (scores, None) - 分数数组和占位符
     """
-    api_key = os.getenv("DASHSCOPE_API_KEY")
+    api_key = settings.dashscope_api_key
 
     if not api_key:
         print("错误: 缺少 DASHSCOPE_API_KEY 环境变量")

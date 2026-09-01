@@ -33,6 +33,7 @@ pymilvus>=2.3.0
 xxhash
 tika
 openai
+langgraph>=1.2.11,<2.0.0
 jieba
 llama-index-core
 llama-index-postprocessor-dashscope-rerank-custom

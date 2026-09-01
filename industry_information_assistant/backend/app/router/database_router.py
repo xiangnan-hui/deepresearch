@@ -1,12 +1,12 @@
 
 
 """数据库探索路由 - PostgreSQL 可视化 + Text2SQL"""
-import os
 from typing import List, Optional, Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 
+from config.settings import settings
 from core.database import get_db
 from models.user import User
 from router.auth_router import get_current_user_required
@@ -214,24 +214,15 @@ async def text2sql_query(
         # 获取 LLM 配置
         config = get_config()
 
-        # 构建数据库连接字符串
-        db_url = os.getenv("DATABASE_URL", "")
-        if not db_url:
-            # 从单独的环境变量构建
-            pg_host = os.getenv("POSTGRES_HOST", "localhost")
-            pg_port = os.getenv("POSTGRES_PORT", "5432")
-            pg_user = os.getenv("POSTGRES_USER", "postgres")
-            pg_pass = os.getenv("POSTGRES_PASSWORD", "")
-            pg_db = os.getenv("POSTGRES_DB", "industry_assistant")
-            if pg_host and pg_user and pg_db:
-                db_url = f"postgresql://{pg_user}:{pg_pass}@{pg_host}:{pg_port}/{pg_db}"
+        # 数据库连接字符串（统一配置，优先 DATABASE_URL，否则由 POSTGRES_* 拼接）
+        db_url = settings.sqlalchemy_database_url
 
-        # 创建 Text2SQL 服务 (使用 qwen-plus 更稳定的 JSON 输出)
+        # 创建 Text2SQL 服务（模型可通过 TEXT2SQL_MODEL 环境变量配置）
         service = Text2SQLService(
-            llm_api_key=config.api_key,
-            llm_base_url=config.base_url,
+            llm_api_key=config.dashscope_api_key,
+            llm_base_url=config.dashscope_base_url,
             db_connection_string=db_url if db_url else None,
-            model="qwen3.7-plus"  # 使用 qwen-plus 替代 deepseek，更稳定的 JSON 输出
+            model=settings.text2sql_model
         )
 
         # 执行查询

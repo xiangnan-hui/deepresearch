@@ -1,12 +1,13 @@
 
 
 """招投标信息服务 - 81API 招投标数据"""
-import os
 import httpx
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 from datetime import datetime
 from urllib.parse import quote
+
+from config.settings import settings
 
 
 @dataclass
@@ -61,8 +62,8 @@ ID: {self.id}
 class BiddingService:
     """招投标信息服务 - 81API"""
 
-    # 81API 招投标接口
-    BASE_URL = "https://bid.81api.com"
+    # 81API 招投标接口（Base URL 可通过 BID_API_BASE_URL 环境变量覆盖）
+    BASE_URL = settings.bid_base_url
 
     # API 端点
     ENDPOINTS = {
@@ -72,7 +73,7 @@ class BiddingService:
     }
 
     def __init__(self):
-        self.app_code = os.getenv("BID_APP_CODE", "")
+        self.app_code = settings.bid_app_code
 
         if not self.app_code:
             print("警告: BID_APP_CODE 环境变量未设置")
@@ -172,7 +173,7 @@ class BiddingService:
                 "Authorization": f"APPCODE {self.app_code}"
             }
 
-            async with httpx.AsyncClient(timeout=15.0, verify=False) as client:
+            async with httpx.AsyncClient(timeout=settings.bid_request_timeout, verify=False) as client:
                 response = await client.get(url, headers=headers)
 
                 if response.status_code == 200:
@@ -244,7 +245,7 @@ class BiddingService:
             }
 
             # 注意：该API的SSL证书与域名不匹配，需要跳过验证
-            async with httpx.AsyncClient(timeout=15.0, verify=False) as client:
+            async with httpx.AsyncClient(timeout=settings.bid_request_timeout, verify=False) as client:
                 response = await client.get(url, headers=headers)
 
                 if response.status_code == 200:

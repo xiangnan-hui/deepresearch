@@ -27,19 +27,47 @@ class BaseAgent(ABC):
     所有专家Agent继承此类，实现特定的 process 方法。
     """
 
+    # Agent 名 -> 统一配置(agents)中的键名映射
+    _CONFIG_KEY_MAP = {
+        "ChiefArchitect": "architect",
+        "DeepScout": "scout",
+        "CodeWizard": "wizard",
+        "CriticMaster": "critic",
+        "LeadWriter": "writer",
+        "DataAnalyst": "data_analyst",
+    }
+
     def __init__(
         self,
         name: str,
         role: str,
         llm_api_key: str,
         llm_base_url: str,
-        model: str = "qwen3.7-plus"
+        model: Optional[str] = None
     ):
         self.name = name
         self.role = role
-        self.model = model
+        # 未显式传入模型时，从统一配置（.env）按 Agent 名解析，避免默认参数覆盖配置
+        self.model = model if model else self._resolve_default_model(name)
         self.client = OpenAI(api_key=llm_api_key, base_url=llm_base_url)
         self.logger = logging.getLogger(f"Agent.{name}")
+
+    @classmethod
+    def _resolve_default_model(cls, name: str) -> str:
+        """从统一配置模块解析 Agent 的默认模型名"""
+        config_key = cls._CONFIG_KEY_MAP.get(name)
+        try:
+            from config.llm_config import get_config
+        except ImportError:
+            try:
+                from app.config.llm_config import get_config
+            except ImportError:
+                # 兼容直接运行脚本；正常应用启动始终使用统一配置。
+                return ""
+        config = get_config()
+        if config_key:
+            return config.get_agent_config(config_key).model
+        return config.default_model
 
     @abstractmethod
     async def process(self, state: ResearchState) -> ResearchState:
@@ -111,6 +139,17 @@ class BaseAgent(ABC):
         """安全解析JSON响应，处理markdown代码块和格式问题"""
         import re
 
+        def normalize_result(result: Any) -> Dict[str, Any]:
+            """保证解析结果符合各 Agent 约定的字典接口。"""
+            if isinstance(result, dict):
+                return self._fix_escaped_values(result)
+            if isinstance(result, list):
+                self.logger.warning(
+                    "LLM returned a top-level JSON array; normalized it under '_root'"
+                )
+                return {"_root": self._fix_escaped_values(result)}
+            return {}
+
         def fix_escaped_newlines(s: str) -> str:
             """修复过度转义的换行符"""
             # 处理多层转义: \\\\n -> \n, \\n -> \n
@@ -131,8 +170,7 @@ class BaseAgent(ABC):
 
             try:
                 result = json.loads(s)
-                # 成功解析后，修复值中的转义字符
-                return self._fix_escaped_values(result)
+                return normalize_result(result)
             except json.JSONDecodeError:
                 pass
 
@@ -152,7 +190,7 @@ class BaseAgent(ABC):
                 # 修复没有引号的key
                 s = re.sub(r'(\{|\,)\s*(\w+)\s*:', r'\1"\2":', s)
                 result = json.loads(s)
-                return self._fix_escaped_values(result)
+                return normalize_result(result)
             except json.JSONDecodeError:
                 pass
 
@@ -250,15 +288,27 @@ class BaseAgent(ABC):
         }
         state["messages"].append(message)
 
-        # 如果有消息队列，立即推送（支持实时流式输出）
-        if "_message_queue" in state and state["_message_queue"] is not None:
+        # LangGraph 节点内部通过 StreamWriter 实时发出 custom 事件。
+        # writer 由图节点临时注入，不进入最终 ResearchState。
+        stream_writer = state.get("_stream_writer")
+        if stream_writer is not None:
+            try:
+                stream_writer(message)
+                self.logger.info(f"[SSE] Streamed custom event: {event_type}")
+            except Exception as e:
+                self.logger.warning(f"Failed to stream custom event: {e}")
+        # 保留旧队列出口供非 LangGraph 的直接 Agent 调用兼容；v2 主流程不再使用它。
+        elif state.get("_message_queue") is not None:
             try:
                 state["_message_queue"].put_nowait(message)
-                self.logger.info(f"[SSE] Queued event: {event_type} (queue size: {state['_message_queue'].qsize()})")
+                self.logger.info(
+                    f"[SSE] Queued event: {event_type} "
+                    f"(queue size: {state['_message_queue'].qsize()})"
+                )
             except Exception as e:
                 self.logger.warning(f"Failed to push message to queue: {e}")
         else:
-            self.logger.warning(f"[SSE] No queue available for event: {event_type}")
+            self.logger.warning(f"[SSE] No stream writer available for event: {event_type}")
 
     def add_log(
         self,

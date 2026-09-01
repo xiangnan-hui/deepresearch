@@ -36,26 +36,28 @@ async def test_full_workflow():
     print("DeepResearch V2.0 端到端测试")
     print("=" * 60)
 
-    # 检查环境变量
-    dashscope_key = os.getenv("DASHSCOPE_API_KEY")
-    bocha_key = os.getenv("BOCHA_API_KEY")
+    # 检查环境变量（统一配置）
+    from config.settings import settings
 
-    if not dashscope_key:
+    if not settings.dashscope_api_key:
         print("❌ 错误: 未设置 DASHSCOPE_API_KEY 环境变量")
         return False
 
-    if not bocha_key:
+    if not settings.bocha_api_key:
         print("❌ 错误: 未设置 BOCHA_API_KEY 环境变量")
         return False
 
-    print(f"✅ DASHSCOPE_API_KEY: {dashscope_key[:8]}...")
-    print(f"✅ BOCHA_API_KEY: {bocha_key[:8]}...")
+    if not settings.deepseek_api_key:
+        print("❌ 错误: 未设置 DEEPSEEK_API_KEY 环境变量")
+        return False
 
-    # 创建服务
+    print(f"✅ DASHSCOPE_API_KEY: {settings.dashscope_api_key[:8]}...")
+    print(f"✅ BOCHA_API_KEY: {settings.bocha_api_key[:8]}...")
+    print(f"✅ DEEPSEEK_API_KEY: {settings.deepseek_api_key[:8]}...")
+
+    # 创建服务（模型/密钥全部从统一配置读取，无需硬编码）
     service = DeepResearchV2Service(
-        llm_api_key=dashscope_key,
-        search_api_key=bocha_key,
-        model="qwen3.7-plus",
+        search_api_key=settings.bocha_api_key,
         max_iterations=2  # 减少迭代次数以加速测试
     )
 
@@ -202,11 +204,15 @@ async def test_individual_agents():
     print("Agent 单元测试")
     print("=" * 60)
 
-    dashscope_key = os.getenv("DASHSCOPE_API_KEY", "")
-    bocha_key = os.getenv("BOCHA_API_KEY", "")
-    llm_base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    from config.settings import settings
 
-    if not dashscope_key or not bocha_key:
+    deepseek_key = settings.deepseek_api_key
+    deepseek_base_url = settings.deepseek_base_url
+    deepscout_key = settings.deepscout_api_key
+    deepscout_base_url = settings.deepscout_base_url
+    bocha_key = settings.bocha_api_key
+
+    if not deepseek_key or not bocha_key:
         print("❌ 缺少必要的环境变量")
         return False
 
@@ -216,7 +222,8 @@ async def test_individual_agents():
         from service.deep_research_v2.agents import ChiefArchitect
         from service.deep_research_v2.state import create_initial_state
 
-        architect = ChiefArchitect(dashscope_key, llm_base_url, "qwen3.7-plus")
+        # 模型未显式传入时自动从统一配置解析（CHIEF_ARCHITECT_MODEL）
+        architect = ChiefArchitect(deepseek_key, deepseek_base_url)
         state = create_initial_state("新能源汽车发展趋势", "test-session-1")
 
         result = await architect.process(state)
@@ -237,7 +244,7 @@ async def test_individual_agents():
     try:
         from service.deep_research_v2.agents import DeepScout
 
-        scout = DeepScout(dashscope_key, llm_base_url, bocha_key, "qwen3.7-plus")
+        scout = DeepScout(deepscout_key, deepscout_base_url, bocha_key)
 
         # 使用上一步的结果
         result["phase"] = "researching"
@@ -259,7 +266,7 @@ async def test_individual_agents():
     try:
         from service.deep_research_v2.agents import CodeWizard
 
-        wizard = CodeWizard(dashscope_key, llm_base_url, "qwen3.7-plus")
+        wizard = CodeWizard(deepseek_key, deepseek_base_url)
         result["phase"] = "analyzing"
         result = await wizard.process(result)
 

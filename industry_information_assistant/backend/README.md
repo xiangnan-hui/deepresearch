@@ -17,8 +17,9 @@ CONTAINER ID   IMAGE                                    COMMAND                 
 pip install -r requirements.txt
 
 ## 修改env文件
-填入个人的DASHSCOPE_API_KEY，SERPER_API_KEY
-SERPER_API_KEY获取方法参考：https://serper.dev/
+复制 `.env.example` 为 `.env` 并填入个人密钥（完整变量清单及注释见 `.env.example`）：
+- 必填：`DEEPSEEK_API_KEY`（5 个核心 Agent 使用的 DeepSeek V4）、`DASHSCOPE_API_KEY`、`BOCHA_API_KEY`
+- 可选：`SERPER_API_KEY`（获取方法参考：https://serper.dev/）、`DEEPSCOUT_API_KEY`/`DEEPSCOUT_BASE_URL`（未设置时回退到 DASHSCOPE_*）
 
 配置 Milvus 连接（可选，默认 localhost:19530）：
 ```

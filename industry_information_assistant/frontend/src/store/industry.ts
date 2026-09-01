@@ -115,6 +115,39 @@ export const INDUSTRY_CONFIGS: IndustryConfig[] = [
     ],
     researchKeywords: ['新能源', '碳中和', '储能', '智能电网'],
   },
+  {
+    id: 'artificial_intelligence',
+    name: '人工智能',
+    description: '大模型、生成式 AI、智能体、算力与 AI 应用创新',
+    newsKeywords: [
+      '人工智能 最新进展',
+      '大模型 发布',
+      '生成式人工智能 政策',
+      'AI Agent 智能体',
+      '多模态模型',
+      '推理模型',
+      'AI 芯片 算力',
+      '开源大模型',
+      '人工智能 融合应用',
+    ],
+    biddingKeywords: [
+      '人工智能平台',
+      '大模型平台',
+      '智能体平台',
+      '算力中心',
+      'AI 应用',
+      '智能问答系统',
+    ],
+    researchKeywords: [
+      '人工智能',
+      '大模型',
+      '生成式 AI',
+      'AI Agent',
+      '多模态',
+      '推理模型',
+      'AI 芯片',
+    ],
+  },
 ]
 
 // 行业状态

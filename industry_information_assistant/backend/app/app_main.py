@@ -1,11 +1,9 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
 import logging
 
-# 加载环境变量
-load_dotenv()
+from config.settings import settings, validate_settings
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -37,6 +35,9 @@ async def lifespan(app: FastAPI):
     # 启动时执行
     logger.info("应用启动中...")
 
+    # 启动时校验必填配置（缺失时给出清晰错误信息并终止启动）
+    validate_settings()
+
     # 初始化定时任务调度器并检查数据
     try:
         from service.scheduler_service import init_scheduler_and_check_data
@@ -64,10 +65,10 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# 添加 CORS 中间件
+# 添加 CORS 中间件（来源可通过 CORS_ORIGINS 环境变量配置，默认允许所有）
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 允许所有源，生产环境中应该设置具体的源
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],  # 允许所有方法
     allow_headers=["*"],  # 允许所有头
@@ -100,4 +101,4 @@ async def hello_world():
 
 if __name__ == '__main__':
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host=settings.app_host, port=settings.app_port)

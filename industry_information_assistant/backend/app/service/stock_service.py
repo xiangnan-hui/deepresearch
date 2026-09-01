@@ -1,11 +1,12 @@
 
 
 """股票资讯服务 - 聚合数据股票API"""
-import os
 import httpx
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 from enum import Enum
+
+from config.settings import settings
 
 
 class StockMarket(Enum):
@@ -76,13 +77,13 @@ class StockInfo:
 class StockService:
     """股票资讯服务"""
 
-    # 聚合数据股票API
-    BASE_URL = "http://web.juhe.cn/finance/stock/hs"
-    SHANGHAI_ALL_URL = "http://web.juhe.cn/finance/stock/shall"
-    SHENZHEN_ALL_URL = "http://web.juhe.cn/finance/stock/szall"
+    # 聚合数据股票API（URL 可通过 JUHE_STOCK_*_URL 环境变量覆盖）
+    BASE_URL = settings.juhe_stock_base_url
+    SHANGHAI_ALL_URL = settings.juhe_stock_shall_url
+    SHENZHEN_ALL_URL = settings.juhe_stock_szall_url
 
     def __init__(self):
-        self.api_key = os.getenv("JUHE_STOCK_API_KEY", "")
+        self.api_key = settings.juhe_stock_api_key
         if not self.api_key:
             print("警告: JUHE_STOCK_API_KEY 环境变量未设置")
 
@@ -101,7 +102,7 @@ class StockService:
         gid = self._normalize_stock_code(stock_code)
 
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=settings.juhe_stock_timeout) as client:
                 response = await client.get(
                     self.BASE_URL,
                     params={
@@ -193,7 +194,7 @@ class StockService:
         url = self.SHANGHAI_ALL_URL if market == "shanghai" else self.SHENZHEN_ALL_URL
 
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            async with httpx.AsyncClient(timeout=settings.juhe_stock_timeout) as client:
                 response = await client.get(
                     url,
                     params={

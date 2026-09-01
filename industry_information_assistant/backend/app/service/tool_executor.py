@@ -23,10 +23,12 @@ from openai import OpenAI
 
 from .react_controller import ReActContext, ToolType, Tool
 
+from config.settings import settings
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --- 缓存配置 ---
-SEARCH_CACHE_TTL = 3600  # 搜索缓存过期时间(秒)
+SEARCH_CACHE_TTL = settings.research_search_cache_ttl  # 搜索缓存过期时间(秒)
 _search_cache: Dict[str, Tuple[List, float]] = {}
 
 
@@ -166,7 +168,7 @@ class ToolExecutor:
 
     def _websearch_sync(self, query: str, count: int = 5) -> List[Dict]:
         """同步执行网络搜索"""
-        url = "https://api.bochaai.com/v1/web-search"
+        url = settings.bocha_base_url
         payload = json.dumps({
             "query": query,
             "summary": True,
@@ -179,7 +181,7 @@ class ToolExecutor:
         }
 
         try:
-            response = requests.post(url, headers=headers, data=payload, timeout=25)
+            response = requests.post(url, headers=headers, data=payload, timeout=settings.bocha_request_timeout)
             response.raise_for_status()
             data = response.json()
 

@@ -97,7 +97,7 @@ class ChiefArchitect(BaseAgent):
 }}
 ```"""
 
-    def __init__(self, llm_api_key: str, llm_base_url: str, model: str = "qwen3.7-plus"):
+    def __init__(self, llm_api_key: str, llm_base_url: str, model: str = None):
         super().__init__(
             name="ChiefArchitect",
             role="总架构师",
@@ -207,6 +207,11 @@ class ChiefArchitect(BaseAgent):
             self.logger.debug(f"Raw LLM response (first 1000 chars): {response[:1000]}")
 
             result = self.parse_json_response(response)
+
+            # 部分模型即使开启 JSON mode，仍可能直接返回大纲数组。
+            # 将顶层数组按本节点的业务语义还原为 outline。
+            if isinstance(result.get("_root"), list):
+                result = {"outline": result["_root"]}
 
             # 检查是否是扁平格式，需要转换
             if result and result.get("sec_1_title") and not result.get("outline"):

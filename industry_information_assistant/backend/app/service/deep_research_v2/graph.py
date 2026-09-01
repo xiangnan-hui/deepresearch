@@ -32,6 +32,17 @@ try:
     LANGGRAPH_AVAILABLE = True
 except ImportError:
     LANGGRAPH_AVAILABLE = False
+
+try:
+    from langgraph.types import StreamWriter
+    from langgraph.config import var_child_runnable_config
+    from langchain_core.runnables import RunnableConfig
+except ImportError:
+    StreamWriter = Any
+    RunnableConfig = Dict[str, Any]
+    var_child_runnable_config = None
+
+if not LANGGRAPH_AVAILABLE:
     logging.warning("LangGraph not installed. Using simplified workflow.")
 
 from .state import ResearchState, ResearchPhase, create_initial_state
@@ -84,19 +95,27 @@ class DeepResearchGraph:
         llm_base_url: str = None,
         search_api_key: str = None,
         model: str = None,
-        max_iterations: int = None
+        max_iterations: int = None,
+        deepscout_api_key: str = None,
+        deepscout_base_url: str = None
     ):
         """
         初始化工作流
 
-        所有参数都可从配置文件读取，传入的参数会覆盖配置
+        所有参数都可从配置文件读取，传入的参数会覆盖配置。
+        5 个核心 Agent（ChiefArchitect/DataAnalyst/CodeWizard/LeadWriter/CriticMaster）
+        使用 DeepSeek V4 配置（llm_api_key/llm_base_url），
+        DeepScout 使用独立的 DEEPSCOUT_API_KEY / DEEPSCOUT_BASE_URL 配置。
         """
         # 获取配置
         config = get_config()
 
-        # 使用传入参数或配置默认值
+        # 使用传入参数或配置默认值（5 个核心 Agent -> DeepSeek）
         self.llm_api_key = llm_api_key or config.api_key
         self.llm_base_url = llm_base_url or config.base_url
+        # DeepScout 独立配置（qwen3.7-plus-2026-05-26）
+        self.deepscout_api_key = deepscout_api_key or config.deepscout_api_key
+        self.deepscout_base_url = deepscout_base_url or config.deepscout_base_url
         self.search_api_key = search_api_key or config.search_api_key
         self.model = model or config.default_model
         self.max_iterations = max_iterations or config.research.max_iterations
@@ -107,7 +126,7 @@ class DeepResearchGraph:
             config.agents.architect.model
         )
         self.scout = DeepScout(
-            self.llm_api_key, self.llm_base_url, self.search_api_key,
+            self.deepscout_api_key, self.deepscout_base_url, self.search_api_key,
             config.agents.scout.model
         )
         self.data_analyst = DataAnalyst(
@@ -203,9 +222,12 @@ class DeepResearchGraph:
         # 添加节点
         workflow.add_node("plan", self._plan_node)
         workflow.add_node("research", self._research_node)
+        workflow.add_node("data_analyze", self._data_analyze_node)
         workflow.add_node("analyze", self._analyze_node)
         workflow.add_node("write", self._write_node)
         workflow.add_node("review", self._review_node)
+        workflow.add_node("re_research", self._re_research_node)
+        workflow.add_node("rewrite", self._rewrite_node)
         workflow.add_node("revise", self._revise_node)
 
         # 设置入口
@@ -213,78 +235,132 @@ class DeepResearchGraph:
 
         # 添加边
         workflow.add_edge("plan", "research")
-        workflow.add_edge("research", "analyze")
+        workflow.add_edge("research", "data_analyze")
+        workflow.add_edge("data_analyze", "analyze")
         workflow.add_edge("analyze", "write")
         workflow.add_edge("write", "review")
 
         # 条件边：审核后决定下一步
         workflow.add_conditional_edges(
             "review",
-            self._should_revise,
+            self._route_after_review,
             {
+                "re_research": "re_research",
                 "revise": "revise",
                 "complete": END
             }
         )
 
+        workflow.add_edge("re_research", "rewrite")
+        workflow.add_edge("rewrite", "review")
         # 修订后回到审核
         workflow.add_edge("revise", "review")
 
         return workflow.compile()
 
-    async def _plan_node(self, state: ResearchState) -> Dict[str, Any]:
+    async def _run_agent_node(
+        self,
+        state: ResearchState,
+        writer: StreamWriter,
+        config: RunnableConfig,
+        agent: Any,
+        phase: ResearchPhase,
+        phase_name: str,
+        phase_content: str,
+    ) -> Dict[str, Any]:
+        """在 LangGraph 节点中执行 Agent，并转发节点内部 custom 事件。"""
+        # Python 3.10 的异步任务不会自动保留 LangGraph runnable context；
+        # 显式绑定 config 后，StreamWriter 才能在长节点内部持续发送事件。
+        context_token = var_child_runnable_config.set(config)
+        try:
+            state = dict(state)
+            state["phase"] = phase.value
+            state["_stream_writer"] = writer
+            writer({"type": "phase", "phase": phase_name, "content": phase_content})
+            result = dict(await agent.process(state))
+        finally:
+            state.pop("_stream_writer", None)
+            var_child_runnable_config.reset(context_token)
+        result.pop("_stream_writer", None)
+        return result
+
+    async def _plan_node(self, state: ResearchState, writer: StreamWriter, config: RunnableConfig) -> Dict[str, Any]:
         """规划节点"""
         logger.info("Executing Plan node...")
-        # 创建状态副本以避免直接修改
-        state = dict(state)
-        state["phase"] = ResearchPhase.INIT.value
-        result = await self.architect.process(state)
-        return dict(result)
+        return await self._run_agent_node(
+            state, writer, config, self.architect, ResearchPhase.INIT,
+            "planning", "开始规划研究..."
+        )
 
-    async def _research_node(self, state: ResearchState) -> Dict[str, Any]:
+    async def _research_node(self, state: ResearchState, writer: StreamWriter, config: RunnableConfig) -> Dict[str, Any]:
         """研究节点"""
         logger.info("Executing Research node...")
-        state = dict(state)
-        state["phase"] = ResearchPhase.RESEARCHING.value
-        result = await self.scout.process(state)
-        return dict(result)
+        return await self._run_agent_node(
+            state, writer, config, self.scout, ResearchPhase.RESEARCHING,
+            "researching", "开始深度搜索..."
+        )
 
-    async def _analyze_node(self, state: ResearchState) -> Dict[str, Any]:
+    async def _data_analyze_node(self, state: ResearchState, writer: StreamWriter, config: RunnableConfig) -> Dict[str, Any]:
+        """数据分析节点"""
+        logger.info("Executing DataAnalyze node...")
+        return await self._run_agent_node(
+            state, writer, config, self.data_analyst, ResearchPhase.ANALYZING,
+            "analyzing", "开始数据分析..."
+        )
+
+    async def _analyze_node(self, state: ResearchState, writer: StreamWriter, config: RunnableConfig) -> Dict[str, Any]:
         """分析节点"""
         logger.info("Executing Analyze node...")
-        state = dict(state)
-        state["phase"] = ResearchPhase.ANALYZING.value
-        result = await self.wizard.process(state)
-        return dict(result)
+        return await self._run_agent_node(
+            state, writer, config, self.wizard, ResearchPhase.ANALYZING,
+            "analyzing", "生成数据分析与可视化..."
+        )
 
-    async def _write_node(self, state: ResearchState) -> Dict[str, Any]:
+    async def _write_node(self, state: ResearchState, writer: StreamWriter, config: RunnableConfig) -> Dict[str, Any]:
         """写作节点"""
         logger.info("Executing Write node...")
-        state = dict(state)
-        state["phase"] = ResearchPhase.WRITING.value
-        result = await self.writer.process(state)
-        return dict(result)
+        return await self._run_agent_node(
+            state, writer, config, self.writer, ResearchPhase.WRITING,
+            "writing", "开始撰写报告..."
+        )
 
-    async def _review_node(self, state: ResearchState) -> Dict[str, Any]:
+    async def _review_node(self, state: ResearchState, writer: StreamWriter, config: RunnableConfig) -> Dict[str, Any]:
         """审核节点"""
         logger.info("Executing Review node...")
-        state = dict(state)
-        state["phase"] = ResearchPhase.REVIEWING.value
-        result = await self.critic.process(state)
-        return dict(result)
+        return await self._run_agent_node(
+            state, writer, config, self.critic, ResearchPhase.REVIEWING,
+            "reviewing", f"审核中（第 {state.get('iteration', 0) + 1} 轮）..."
+        )
 
-    async def _revise_node(self, state: ResearchState) -> Dict[str, Any]:
+    async def _re_research_node(self, state: ResearchState, writer: StreamWriter, config: RunnableConfig) -> Dict[str, Any]:
+        """根据审核反馈补充搜索。"""
+        logger.info("Executing ReResearch node...")
+        return await self._run_agent_node(
+            state, writer, config, self.scout, ResearchPhase.RE_RESEARCHING,
+            "re_researching", "根据审核反馈补充搜索..."
+        )
+
+    async def _rewrite_node(self, state: ResearchState, writer: StreamWriter, config: RunnableConfig) -> Dict[str, Any]:
+        """补充搜索后重新撰写。"""
+        logger.info("Executing Rewrite node...")
+        return await self._run_agent_node(
+            state, writer, config, self.writer, ResearchPhase.WRITING,
+            "rewriting", "基于新信息重新撰写..."
+        )
+
+    async def _revise_node(self, state: ResearchState, writer: StreamWriter, config: RunnableConfig) -> Dict[str, Any]:
         """修订节点"""
         logger.info("Executing Revise node...")
-        state = dict(state)
-        state["phase"] = ResearchPhase.REVISING.value
-        result = await self.writer.process(state)
-        return dict(result)
+        return await self._run_agent_node(
+            state, writer, config, self.writer, ResearchPhase.REVISING,
+            "revising", "根据反馈修订报告..."
+        )
 
-    def _should_revise(self, state: ResearchState) -> Literal["revise", "complete"]:
-        """决定是否需要修订"""
-        # 检查是否有未解决的严重问题
-        if state["unresolved_issues"] > 0 and state["iteration"] < state["max_iterations"]:
+    def _route_after_review(self, state: ResearchState) -> Literal["re_research", "revise", "complete"]:
+        """根据 Critic 写入的阶段决定审核后的图路由。"""
+        if state.get("phase") == ResearchPhase.RE_RESEARCHING.value:
+            return "re_research"
+        if state.get("phase") == ResearchPhase.REVISING.value:
             return "revise"
         return "complete"
 
@@ -344,32 +420,67 @@ class DeepResearchGraph:
         # 存储 user_id 用于检查点
         state["_user_id"] = user_id
 
-        # 始终使用手写版本执行（支持实时SSE流式输出）
-        # LangGraph 版本会批量处理消息，无法实现实时流式输出
-        # if LANGGRAPH_AVAILABLE and self.graph:
-        #     async for event in self._run_with_langgraph(state):
-        #         yield event
-        # else:
-        async for event in self._run_simplified(state):
+        if not LANGGRAPH_AVAILABLE or self.graph is None or StreamWriter is Any:
+            yield {
+                "type": "error",
+                "content": "当前环境的 LangGraph 版本不支持节点内 custom streaming，请安装项目要求的 LangGraph 版本"
+            }
+            return
+
+        # v2 主流程完全由 LangGraph 调度；节点内部事件通过 custom stream 实时输出。
+        async for event in self._run_with_langgraph(state):
             yield event
 
     async def _run_with_langgraph(self, state: ResearchState) -> AsyncGenerator[Dict[str, Any], None]:
-        """使用 LangGraph 执行"""
-        # 追踪已输出的消息数量，避免重复
-        yielded_count = 0
+        """使用 LangGraph 执行，并转发节点内部 custom 事件。"""
+        session_id = state.get("session_id", "")
+        if session_id:
+            clear_cancel_flag(session_id)
 
         try:
-            # LangGraph 的流式执行
-            async for output in self.graph.astream(state):
-                # 提取消息并输出
-                for node_name, node_state in output.items():
-                    if isinstance(node_state, dict) and "messages" in node_state:
-                        messages = node_state["messages"]
-                        # 只输出新消息（跳过已输出的）
-                        new_messages = messages[yielded_count:]
-                        for message in new_messages:
-                            yield message
-                        yielded_count = len(messages)
+            # custom: Agent.add_message() 的实时事件
+            # updates: 节点完成后的状态更新
+            async for chunk in self.graph.astream(
+                state,
+                stream_mode=["custom", "updates"],
+            ):
+                # 不同 LangGraph 版本分别返回 (mode, data) 或
+                # (namespace, mode, data)，统一归一化。
+                if not isinstance(chunk, tuple):
+                    continue
+                if len(chunk) == 2:
+                    mode, payload = chunk
+                elif len(chunk) == 3:
+                    _, mode, payload = chunk
+                else:
+                    logger.warning(f"Unknown LangGraph stream chunk: {chunk!r}")
+                    continue
+                if mode == "custom":
+                    yield payload
+                    continue
+
+                if mode == "updates" and isinstance(payload, dict):
+                    for node_name, node_state in payload.items():
+                        if not isinstance(node_state, dict):
+                            continue
+                        state.update(node_state)
+                        # 对前端暴露统一的节点完成事件，不传输完整 state。
+                        yield {
+                            "type": "node_completed",
+                            "node": node_name,
+                            "phase": node_state.get("phase", ""),
+                            "session_id": session_id,
+                        }
+
+            # 保持与旧 SSE 协议兼容：图执行结束后发送统一完成事件。
+            yield {
+                "type": "research_complete",
+                "final_report": state.get("final_report", ""),
+                "quality_score": state.get("quality_score", 0.0),
+                "facts_count": len(state.get("facts", [])),
+                "charts_count": len(state.get("charts", [])),
+                "iterations": state.get("iteration", 0),
+            }
 
         except Exception as e:
             logger.error(f"LangGraph execution error: {e}")
@@ -780,7 +891,9 @@ def create_research_graph(
     llm_api_key: str = None,
     llm_base_url: str = None,
     search_api_key: str = None,
-    model: str = None
+    model: str = None,
+    deepscout_api_key: str = None,
+    deepscout_base_url: str = None
 ) -> DeepResearchGraph:
     """
     工厂函数：创建 DeepResearch 工作流图
@@ -788,10 +901,12 @@ def create_research_graph(
     所有参数都是可选的，会从配置文件读取默认值
 
     Args:
-        llm_api_key: LLM API 密钥（可选，默认从配置读取）
+        llm_api_key: LLM API 密钥（可选，默认从配置读取，5 个核心 Agent 使用）
         llm_base_url: LLM API 基础 URL（可选，默认从配置读取）
         search_api_key: 搜索 API 密钥（可选，默认从配置读取）
         model: 默认模型名称（可选，默认从配置读取）
+        deepscout_api_key: DeepScout 独立 API 密钥（可选，默认从配置读取）
+        deepscout_base_url: DeepScout 独立 Base URL（可选，默认从配置读取）
 
     Returns:
         DeepResearchGraph 实例
@@ -800,5 +915,7 @@ def create_research_graph(
         llm_api_key=llm_api_key,
         llm_base_url=llm_base_url,
         search_api_key=search_api_key,
-        model=model
+        model=model,
+        deepscout_api_key=deepscout_api_key,
+        deepscout_base_url=deepscout_base_url
     )

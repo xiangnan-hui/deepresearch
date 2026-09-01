@@ -6,7 +6,6 @@
 - 使用 81API 搜索招投标信息
 - 支持多行业配置
 """
-import os
 import asyncio
 import json
 import logging
@@ -15,6 +14,7 @@ from typing import Dict, Any, List, Optional
 import httpx
 from sqlalchemy.orm import Session
 
+from config.settings import settings
 from models.news import IndustryNews, BiddingInfo, NewsCollectionTask
 from service.bidding_service import get_bidding_service
 from config.industry_config import get_industry_config, get_all_industries
@@ -27,7 +27,7 @@ class NewsCollectionService:
 
     def __init__(self, db: Session):
         self.db = db
-        self.bocha_api_key = os.getenv("BOCHA_API_KEY", "")
+        self.bocha_api_key = settings.bocha_api_key
         self.bidding_service = get_bidding_service()
 
         if not self.bocha_api_key:
@@ -50,7 +50,7 @@ class NewsCollectionService:
             logger.error("[_bocha_search] Bocha API key not configured")
             return []
 
-        url = "https://api.bochaai.com/v1/web-search"
+        url = settings.bocha_base_url
         payload = {
             "query": query,
             "summary": True,
@@ -63,7 +63,7 @@ class NewsCollectionService:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=settings.bocha_request_timeout) as client:
                 logger.info(f"[_bocha_search] 发送请求到 {url}")
                 response = await client.post(url, headers=headers, json=payload)
                 logger.info(f"[_bocha_search] 响应状态码: {response.status_code}")

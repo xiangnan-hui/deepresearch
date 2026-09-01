@@ -1,28 +1,39 @@
 
-import os
+"""服务 API 连接配置
+
+统一从 config.settings 读取（环境变量），不再在此处维护任何硬编码密钥。
+保留 get_api_config() 返回的字典键名，兼容现有调用方。
+"""
+
 from typing import Dict, Any
+
+from config.settings import settings
+
 
 class ServiceConfig:
     """Configuration for service API connections"""
-    
+
     @staticmethod
     def get_api_config() -> Dict[str, Any]:
         """
-        Get API configuration from environment variables or default settings
+        Get API configuration from the unified settings module (env-driven).
 
         Returns:
             Dictionary with API configuration
         """
         return {
-            'base_url': os.environ.get('API_BASE_URL', 'http://localhost:9380'),
-            'api_key': os.environ.get('API_KEY', 'ragflow-FiZjAzYTVjMWM1YTExZjA4MGFmNTZlOT'),
-            'default_dataset_id': os.environ.get('DEFAULT_DATASET_ID', '5299f1501c5a11f0a5ea56e92569c6d7'),
-            'serper_api_key': os.environ.get('SERPER_API_KEY', '485a749de588ba9426d5de22f4ca1614a70e2e28'),
-            'milvus_host': os.environ.get('MILVUS_HOST', 'localhost'),
-            'milvus_port': int(os.environ.get('MILVUS_PORT', '19530')),
-            'policy_collection': os.environ.get('POLICY_COLLECTION', 'policy_documents'),
-            # DeepResearch API keys
-            'bochaai_api_key': os.environ.get('BOCHA_API_KEY', ''),
-            'dashscope_api_key': os.environ.get('DASHSCOPE_API_KEY', ''),
-            'dashscope_base_url': os.environ.get('DASHSCOPE_BASE_URL', 'https://dashscope.aliyuncs.com/compatible-mode/v1'),
-        } 
+            # RAGFlow 文档服务
+            'base_url': settings.ragflow_base_url,
+            'api_key': settings.ragflow_api_key,
+            'default_dataset_id': settings.ragflow_default_dataset_id,
+            # Serper 搜索
+            'serper_api_key': settings.serper_api_key,
+            # Milvus
+            'milvus_host': settings.milvus_host,
+            'milvus_port': settings.milvus_port,
+            'policy_collection': settings.policy_collection,
+            # DeepResearch（V1 流程）API keys
+            'bochaai_api_key': settings.bocha_api_key,
+            'dashscope_api_key': settings.dashscope_api_key,
+            'dashscope_base_url': settings.dashscope_base_url,
+        }

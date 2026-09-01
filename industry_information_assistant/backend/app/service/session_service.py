@@ -1,28 +1,26 @@
 
 import json
-import os
 import time
 import uuid
 from typing import List, Dict, Any, Optional
 import redis
 import tiktoken
 
+from config.settings import settings
+
 class SessionService:
     """会话服务，用于管理聊天历史记录"""
-    
+
     def __init__(self):
         """初始化会话服务"""
-        redis_host = os.environ.get("REDIS_HOST", "redis")
-        redis_port = int(os.environ.get("REDIS_PORT", 6379))
-        redis_password = os.environ.get("REDIS_PASSWORD", None)
         self.redis_client = redis.Redis(
-            host=redis_host,
-            port=redis_port,
-            password=redis_password,
+            host=settings.redis_host,
+            port=settings.redis_port,
+            password=settings.redis_password,
             decode_responses=True
         )
-        self.token_limit = 5000
-        self.max_messages = 20  # 最大保存的消息数量
+        self.token_limit = settings.session_token_limit
+        self.max_messages = settings.session_max_messages  # 最大保存的消息数量
         self.encoding = tiktoken.get_encoding("cl100k_base")  # OpenAI通用编码
     
     def create_session(self) -> Dict[str, Any]:

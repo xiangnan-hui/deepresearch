@@ -2,17 +2,18 @@ version: '3.8'
 
 services:
   # ==================== PostgreSQL 数据库 ====================
+  # 账号密码通过 .env 配置（POSTGRES_USER/POSTGRES_PASSWORD/POSTGRES_DB），默认与 backend/.env.example 一致
   postgres:
     image: postgres:15-alpine
     container_name: industry_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres123
-      POSTGRES_DB: industry_assistant
-      TZ: Asia/Shanghai
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-industry_assistant}
+      TZ: ${TIMEZONE:-Asia/Shanghai}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/init-db:/docker-entrypoint-initdb.d
@@ -31,7 +32,7 @@ services:
     restart: unless-stopped
     command: redis-server --appendonly yes
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -68,8 +69,8 @@ services:
     container_name: industry_minio
     restart: unless-stopped
     environment:
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?Set MINIO_ACCESS_KEY in .env}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?Set MINIO_SECRET_KEY in .env}
     ports:
       - "9001:9001"
       - "9000:9000"
@@ -95,7 +96,7 @@ services:
     volumes:
       - milvus_data:/var/lib/milvus
     ports:
-      - "19530:19530"
+      - "${MILVUS_PORT:-19530}:19530"
       - "9091:9091"
     depends_on:
       - etcd

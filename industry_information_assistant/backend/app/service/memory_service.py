@@ -10,7 +10,6 @@
 4. 用户偏好学习
 """
 
-import os
 import json
 import uuid
 from typing import List, Dict, Any, Optional, Tuple
@@ -18,25 +17,23 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 from openai import OpenAI
 
-from dotenv import load_dotenv
-load_dotenv()
-
+from config.settings import settings
 from models.chat import ChatSession, ChatMessage, LongTermMemory
 from service.embedding_service import generate_embedding
 from service.milvus_service import get_milvus_service, MilvusService
 
-# 记忆触发阈值
-MEMORY_TOKEN_THRESHOLD = 10000  # 超过此 token 数触发记忆压缩
-MEMORY_COLLECTION_NAME = "long_term_memories"  # Milvus 集合名称
+# 记忆触发阈值（环境变量 MEMORY_TOKEN_THRESHOLD 可覆盖）
+MEMORY_TOKEN_THRESHOLD = settings.memory_token_threshold  # 超过此 token 数触发记忆压缩
+MEMORY_COLLECTION_NAME = settings.memory_collection_name  # Milvus 集合名称
 
 
 class MemoryService:
     """长期记忆服务"""
 
     def __init__(self):
-        self.api_key = os.getenv("DASHSCOPE_API_KEY")
-        self.base_url = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-        self.model = os.getenv("DASHSCOPE_MODEL", "qwen3.7-plus")
+        self.api_key = settings.dashscope_api_key
+        self.base_url = settings.dashscope_base_url
+        self.model = settings.dashscope_model
         self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
         self._milvus: Optional[MilvusService] = None
 

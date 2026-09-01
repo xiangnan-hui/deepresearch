@@ -1,7 +1,6 @@
 
 
 """Milvus 向量存储服务"""
-import os
 from typing import List, Dict, Any, Optional
 from pymilvus import (
     connections,
@@ -12,14 +11,16 @@ from pymilvus import (
     utility,
 )
 
+from config.settings import settings
+
 
 class MilvusService:
     """Milvus 向量存储服务"""
 
     def __init__(self):
-        self.host = os.getenv("MILVUS_HOST", "localhost")
-        self.port = int(os.getenv("MILVUS_PORT", "19530"))
-        self.vector_dim = 1024  # text-embedding-v4 维度
+        self.host = settings.milvus_host
+        self.port = settings.milvus_port
+        self.vector_dim = settings.embedding_dimensions  # 与 Embedding 模型维度保持一致
         self._connect()
 
     def _connect(self):

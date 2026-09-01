@@ -1,7 +1,6 @@
 
 
 import json
-import os
 from typing import List, Dict, Any, Optional, Generator
 import uuid
 from openai import OpenAI
@@ -11,6 +10,7 @@ from llama_index.core.schema import NodeWithScore
 from llama_index.postprocessor.dashscope_rerank import DashScopeRerank
 import tiktoken
 
+from config.settings import settings
 from .document_service import DocumentService
 from .web_search_service import WebSearchService
 from .session_service import SessionService
@@ -19,11 +19,11 @@ from .memory_service import get_memory_service
 
 class ChatService:
     """Chat service that combines document retrieval and LLM generation"""
-    
+
     def __init__(self, document_service: DocumentService, web_search_service: WebSearchService, session_service: SessionService):
         """
         Initialize the ChatService.
-        
+
         Args:
             document_service: Document service for knowledge base retrieval
             web_search_service: Web search service for internet search
@@ -32,11 +32,11 @@ class ChatService:
         self.document_service = document_service
         self.web_search_service = web_search_service
         self.session_service = session_service
-        self.openai_api_key = os.environ.get("DASHSCOPE_API_KEY", "")
-        self.openai_base_url = os.environ.get("OPENAI_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-        self.openai_model = os.environ.get("OPENAI_MODEL", "deepseek-r1")
+        self.openai_api_key = settings.dashscope_api_key
+        self.openai_base_url = settings.chat_base_url
+        self.openai_model = settings.chat_model
         self.encoding = tiktoken.get_encoding("cl100k_base")  # OpenAI通用编码
-        self.max_tokens = 12000  # 最大token数量限制
+        self.max_tokens = settings.chat_max_tokens  # 最大token数量限制
     
     def retrieve_from_knowledge_base(self, question: str, dataset_id: str) -> List[Dict[str, Any]]:
         """
@@ -147,7 +147,7 @@ class ChatService:
             文档相似度分数列表
         """
         try:
-            api_key = os.getenv("DASHSCOPE_API_KEY", self.openai_api_key)
+            api_key = settings.dashscope_api_key or self.openai_api_key
             
             # 从文档中提取文本
             texts = [doc["content"] for doc in documents]

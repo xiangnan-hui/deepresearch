@@ -24,6 +24,8 @@ from enum import Enum
 from abc import ABC, abstractmethod
 from openai import OpenAI
 
+from config.settings import settings
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
 
@@ -344,8 +346,8 @@ class ReActController:
         tools: List[Tool],
         llm_api_key: str,
         llm_base_url: str,
-        max_steps: int = 10,
-        model: str = "qwen3.7-plus"
+        max_steps: int = None,
+        model: str = None
     ):
         """
         初始化 ReAct 控制器
@@ -354,14 +356,14 @@ class ReActController:
             tools: 可用工具列表
             llm_api_key: LLM API 密钥
             llm_base_url: LLM API 基础 URL
-            max_steps: 最大执行步骤数
-            model: 使用的模型名称
+            max_steps: 最大执行步骤数（默认从统一配置读取 REACT_MAX_STEPS）
+            model: 使用的模型名称（默认从统一配置读取 DASHSCOPE_MODEL）
         """
         self.tools = {t.name: t for t in tools}
         self.llm_api_key = llm_api_key
         self.llm_base_url = llm_base_url
-        self.max_steps = max_steps
-        self.model = model
+        self.max_steps = max_steps if max_steps is not None else settings.react_max_steps
+        self.model = model or settings.dashscope_model
         self.client = OpenAI(api_key=llm_api_key, base_url=llm_base_url)
 
     def _format_tools_description(self) -> str:

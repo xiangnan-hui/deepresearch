@@ -47,7 +47,9 @@ class DeepResearchV2Service:
         llm_base_url: Optional[str] = None,
         search_api_key: Optional[str] = None,
         model: Optional[str] = None,
-        max_iterations: Optional[int] = None
+        max_iterations: Optional[int] = None,
+        deepscout_api_key: Optional[str] = None,
+        deepscout_base_url: Optional[str] = None
     ):
         """
         初始化服务
@@ -55,17 +57,21 @@ class DeepResearchV2Service:
         所有参数都是可选的，会从配置文件读取默认值
 
         Args:
-            llm_api_key: LLM API 密钥（可选，默认从配置读取）
+            llm_api_key: LLM API 密钥（可选，默认从配置读取，5 个核心 Agent 使用）
             llm_base_url: LLM API 基础 URL（可选，默认从配置读取）
             search_api_key: 搜索 API 密钥（可选，默认从配置读取）
             model: 默认模型名称（可选，默认从配置读取）
             max_iterations: 最大迭代次数（可选，默认从配置读取）
+            deepscout_api_key: DeepScout 独立 API 密钥（可选，默认从配置读取）
+            deepscout_base_url: DeepScout 独立 Base URL（可选，默认从配置读取）
         """
         # 获取配置
         config = get_config()
 
         self.llm_api_key = llm_api_key or config.api_key
         self.llm_base_url = llm_base_url or config.base_url
+        self.deepscout_api_key = deepscout_api_key or config.deepscout_api_key
+        self.deepscout_base_url = deepscout_base_url or config.deepscout_base_url
         self.search_api_key = search_api_key or config.search_api_key
         self.model = model or config.default_model
         self.max_iterations = max_iterations or config.research.max_iterations
@@ -76,7 +82,9 @@ class DeepResearchV2Service:
             llm_base_url=self.llm_base_url,
             search_api_key=self.search_api_key,
             model=self.model,
-            max_iterations=self.max_iterations
+            max_iterations=self.max_iterations,
+            deepscout_api_key=self.deepscout_api_key,
+            deepscout_base_url=self.deepscout_base_url
         )
 
         logger.info(f"DeepResearch V2 Service initialized with default model: {self.model}")
@@ -181,7 +189,9 @@ def create_service(
     llm_api_key: Optional[str] = None,
     llm_base_url: Optional[str] = None,
     search_api_key: Optional[str] = None,
-    model: Optional[str] = None
+    model: Optional[str] = None,
+    deepscout_api_key: Optional[str] = None,
+    deepscout_base_url: Optional[str] = None
 ) -> DeepResearchV2Service:
     """
     工厂函数：创建 DeepResearch V2 服务
@@ -193,6 +203,8 @@ def create_service(
         llm_base_url: LLM API 基础 URL（可选）
         search_api_key: 搜索 API 密钥（可选）
         model: 默认模型名称（可选）
+        deepscout_api_key: DeepScout 独立 API 密钥（可选）
+        deepscout_base_url: DeepScout 独立 Base URL（可选）
 
     Returns:
         DeepResearchV2Service 实例
@@ -201,5 +213,7 @@ def create_service(
         llm_api_key=llm_api_key,
         llm_base_url=llm_base_url,
         search_api_key=search_api_key,
-        model=model
+        model=model,
+        deepscout_api_key=deepscout_api_key,
+        deepscout_base_url=deepscout_base_url
     )

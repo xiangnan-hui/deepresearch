@@ -1,7 +1,6 @@
 
 
 """DocMind 文档智能解析服务"""
-import os
 import time
 import hashlib
 from typing import List, Dict, Any, Optional
@@ -10,6 +9,7 @@ from alibabacloud_docmind_api20220711 import models as docmind_models
 from alibabacloud_tea_openapi import models as open_api_models
 from alibabacloud_tea_util import models as util_models
 
+from config.settings import settings
 from service.embedding_service import generate_embedding
 from service.milvus_service import get_milvus_service
 
@@ -18,9 +18,9 @@ class DocMindService:
     """DocMind 文档解析服务"""
 
     def __init__(self):
-        self.access_key_id = os.getenv("DOCMIND_ACCESS_KEY_ID")
-        self.access_key_secret = os.getenv("DOCMIND_ACCESS_KEY_SECRET")
-        self.endpoint = "docmind-api.cn-hangzhou.aliyuncs.com"
+        self.access_key_id = settings.docmind_access_key_id
+        self.access_key_secret = settings.docmind_access_key_secret
+        self.endpoint = settings.docmind_endpoint
         self.client = self._create_client()
 
     def _create_client(self) -> DocMindClient:
@@ -85,7 +85,12 @@ class DocMindService:
             print(f"查询状态失败: {e}")
             return None
 
-    def wait_for_completion(self, task_id: str, poll_interval: int = 5, max_wait: int = 300) -> bool:
+    def wait_for_completion(
+        self,
+        task_id: str,
+        poll_interval: int = None,
+        max_wait: int = None
+    ) -> bool:
         """
         等待任务完成
 
@@ -97,6 +102,10 @@ class DocMindService:
         Returns:
             任务是否成功完成
         """
+        # 未显式传入时使用统一配置（环境变量）
+        poll_interval = poll_interval if poll_interval is not None else settings.docmind_poll_interval
+        max_wait = max_wait if max_wait is not None else settings.docmind_max_wait
+
         print("开始轮询任务状态...")
         start_time = time.time()
 

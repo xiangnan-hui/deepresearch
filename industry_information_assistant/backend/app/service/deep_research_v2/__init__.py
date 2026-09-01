@@ -15,9 +15,9 @@ DeepResearch V2.0 - 生成式多智能体协作网络
 from service.deep_research_v2 import DeepResearchService
 
 service = DeepResearchService(
-    llm_api_key="your-api-key",
-    llm_base_url="https://api.example.com",
-    search_api_key="your-search-key"
+    llm_api_key="${DEEPSEEK_API_KEY}",
+    llm_base_url="${DEEPSEEK_BASE_URL}",
+    search_api_key="${BOCHA_API_KEY}"
 )
 
 async for event in service.research("中国AI芯片市场分析"):

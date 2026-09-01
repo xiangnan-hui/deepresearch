@@ -60,11 +60,11 @@ docker compose ps
 ```
 
 **服务访问地址：**
-- PostgreSQL: `localhost:5432` (用户名: `postgres`, 密码: `postgres123`)
+- PostgreSQL: `localhost:5432` (用户名/密码 from `POSTGRES_USER`/`POSTGRES_PASSWORD`)
 - Redis: `localhost:6379`
 - Milvus: `localhost:19530`
 - Elasticsearch: `localhost:1200`
-- MinIO Console: `localhost:9001` (admin/minioadmin)
+- MinIO Console: `localhost:9001` (credentials from `MINIO_ACCESS_KEY`/`MINIO_SECRET_KEY`)
 
 ### 3. 配置环境变量
 
@@ -79,7 +79,16 @@ cp .env.example .env
 
 **必填的 API Key（其他配置已预配置好）：**
 ```env
-# 阿里云百炼 (LLM & Embedding) - 必填
+# DeepSeek V4 - 5 个核心 Agent 共用（必填）
+DEEPSEEK_API_KEY=your-deepseek-api-key
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+
+# DeepScout（深度侦探，独立配置；未设置时回退到 DASHSCOPE_*）
+DEEPSCOUT_API_KEY=your-deepscout-api-key
+DEEPSCOUT_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+DEEPSCOUT_MODEL=qwen3.7-plus-2026-05-26
+
+# 阿里云百炼 (Embedding/Rerank/长期记忆/V1 流程) - 必填
 DASHSCOPE_API_KEY=your-dashscope-api-key
 
 # 搜索服务 - 必填
@@ -89,14 +98,17 @@ BOCHA_API_KEY=your-bocha-api-key
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
 POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres123
+POSTGRES_PASSWORD=<set-a-strong-password>
 POSTGRES_DB=industry_assistant
 
 # JWT 密钥（生产环境建议修改）
-JWT_SECRET_KEY=your-super-secret-key-change-in-production
+JWT_SECRET_KEY=<generate-a-random-secret>
 ```
 
 **注意：**
+- 所有配置统一由 `backend/app/config/settings.py` 读取，业务代码不再散落 `os.getenv()`
+- 6 个 Agent 的模型映射：ChiefArchitect/DataAnalyst/CodeWizard/LeadWriter/CriticMaster → DeepSeek V4（`CHIEF_ARCHITECT_MODEL` 等变量可覆盖）；DeepScout → `DEEPSCOUT_MODEL`（默认 qwen3.7-plus-2026-05-26）
+- 后端启动时会校验必填配置，缺失时给出明确错误提示
 - PostgreSQL、Redis、Milvus 的配置已在 Docker Compose 中设置好
 - `.env.example` 文件中的默认值与 Docker 配置匹配
 - 如果使用 Docker，数据库相关配置**通常无需修改**
@@ -144,12 +156,25 @@ npm run dev
 
 | 变量名 | 说明 | 申请地址 |
 |--------|------|----------|
-| `DASHSCOPE_API_KEY` | 阿里云百炼 (LLM & Embedding) | https://bailian.console.aliyun.com/ |
+| `DEEPSEEK_API_KEY` | DeepSeek V4（5 个核心 Agent 共用） | https://platform.deepseek.com/ |
+| `DASHSCOPE_API_KEY` | 阿里云百炼 (Embedding/Rerank/长期记忆/V1 流程) | https://bailian.console.aliyun.com/ |
 | `BOCHA_API_KEY` | 博查搜索 API | https://open.bochaai.com/ |
-| `POSTGRES_*` | PostgreSQL 连接配置 | - |
+| `POSTGRES_*` / `DATABASE_URL` | PostgreSQL 连接配置 | - |
 | `REDIS_HOST/PORT` | Redis 连接配置 | - |
 | `MILVUS_HOST/PORT` | Milvus 向量数据库配置 | - |
 | `JWT_SECRET_KEY` | JWT 认证密钥 (自定义字符串) | - |
+
+#### Agent 模型配置（默认已按架构要求配置）
+
+| 变量名 | 默认值 | 对应 Agent |
+|--------|--------|-----------|
+| `CHIEF_ARCHITECT_MODEL` | `deepseek-v4` | ChiefArchitect（总架构师） |
+| `DATA_ANALYST_MODEL` | `deepseek-v4` | DataAnalyst（数据分析师） |
+| `CODE_WIZARD_MODEL` | `deepseek-v4` | CodeWizard（代码极客） |
+| `LEAD_WRITER_MODEL` | `deepseek-v4` | LeadWriter（首席笔杆） |
+| `CRITIC_MASTER_MODEL` | `deepseek-v4` | CriticMaster（审核大师） |
+| `DEEPSCOUT_MODEL` | `qwen3.7-plus-2026-05-26` | DeepScout（深度侦探） |
+| `DEEPSCOUT_API_KEY` / `DEEPSCOUT_BASE_URL` | 回退到 `DASHSCOPE_*` | DeepScout 独立配置 |
 
 #### 其它配置
 
@@ -162,6 +187,11 @@ npm run dev
 | `BID_APP_CODE` | 招投标 API Code | 同上 |
 | `JUHE_STOCK_API_KEY` | 聚合数据 - 股票行情 | https://www.juhe.cn/docs/api/id/21 |
 | `OPENROUTER_API_KEY` | OpenRouter (多模型网关) | https://openrouter.ai/ |
+| `EMBEDDING_MODEL` / `EMBEDDING_DIMENSIONS` | Embedding 模型与向量维度 | - |
+| `RESEARCH_MAX_ITERATIONS` 等 | 深度研究流程参数（迭代次数、并发、超时等） | - |
+| `APP_HOST` / `APP_PORT` / `CORS_ORIGINS` | 后端服务监听地址、端口与跨域配置 | - |
+
+> 完整的环境变量清单（含默认值与注释）见 `backend/.env.example`。
 
 
 ### 高级部署选项
@@ -183,7 +213,7 @@ npm run dev
    psql postgres
 
    # 创建用户
-   CREATE USER postgres WITH PASSWORD 'postgres123';
+   CREATE USER postgres WITH PASSWORD '<set-a-strong-password>';
 
    # 创建数据库
    CREATE DATABASE industry_assistant OWNER postgres;
@@ -205,7 +235,7 @@ npm run dev
    POSTGRES_HOST=localhost
    POSTGRES_PORT=5432
    POSTGRES_USER=postgres
-   POSTGRES_PASSWORD=postgres123
+   POSTGRES_PASSWORD=<set-a-strong-password>
    POSTGRES_DB=industry_assistant
    ```
 
@@ -310,7 +340,7 @@ docker compose up -d
    ```bash
    # 确保配置与 Docker 一致
    POSTGRES_USER=postgres
-   POSTGRES_PASSWORD=postgres123
+   POSTGRES_PASSWORD=<set-a-strong-password>
    POSTGRES_DB=industry_assistant
    ```
 

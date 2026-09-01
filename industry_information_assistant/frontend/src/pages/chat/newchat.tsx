@@ -32,12 +32,19 @@ export default function NewChat() {
   // 推荐问题 - 根据行业生成，只要3个
   const recommendQuestions = useMemo(() => {
     const industryName = currentIndustryName
+    if (industry.currentIndustryId === 'artificial_intelligence') {
+      return [
+        '最近一个月值得关注的 AI 前沿进展有哪些？',
+        '主流推理模型和智能体框架的最新差异是什么？',
+        '生成式 AI 企业落地的成本、风险和 ROI 如何评估？',
+      ]
+    }
     return [
       `${industryName}市场规模`,
       `${industryName}主要企业`,
       `${industryName}政策解读`,
     ]
-  }, [currentIndustryName])
+  }, [currentIndustryName, industry.currentIndustryId])
 
   // 附件状态管理
   const [attachments, setAttachments] = useState<AttachmentInfo[]>([])

@@ -1,24 +1,22 @@
 
 import http.client
 import json
-import os
 from typing import Dict, Any, List
-from dotenv import load_dotenv
 
-load_dotenv()
+from config.settings import settings
 
 class WebSearchService:
     """ 使用 Serper API 执行网络搜索的服务 """
-    
+
     def __init__(self, api_key: str = None):
         """
         使用 API 密钥初始化 WebSearchService。
-        
+
         参数:
-            api_key: Serper.dev 的 API 密钥。如果未提供，将尝试从环境变量中读取。
+            api_key: Serper.dev 的 API 密钥。如果未提供，将从统一配置（环境变量）中读取。
         """
-        self.api_key = api_key or os.environ.get('SERPER_API_KEY')
-        self.host = "google.serper.dev"
+        self.api_key = api_key or settings.serper_api_key
+        self.host = settings.serper_host
         self.headers = {
             'X-API-KEY': self.api_key,
             'Content-Type': 'application/json'

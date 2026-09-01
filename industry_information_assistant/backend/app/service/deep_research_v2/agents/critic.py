@@ -138,7 +138,7 @@ class CriticMaster(BaseAgent):
 }}
 ```"""
 
-    def __init__(self, llm_api_key: str, llm_base_url: str, model: str = "qwen3.7-plus"):
+    def __init__(self, llm_api_key: str, llm_base_url: str, model: str = None):
         super().__init__(
             name="CriticMaster",
             role="毒舌评论家",

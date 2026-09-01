@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from enum import Enum
 from openai import OpenAI
 
+from config.settings import settings
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
@@ -169,7 +171,7 @@ class Text2SQLService:
         llm_api_key: str,
         llm_base_url: str,
         db_connection_string: Optional[str] = None,
-        model: str = "qwen3.7-plus"
+        model: str = None
     ):
         """
         初始化 Text2SQL 服务
@@ -178,12 +180,12 @@ class Text2SQLService:
             llm_api_key: LLM API 密钥
             llm_base_url: LLM API 基础 URL
             db_connection_string: 数据库连接字符串
-            model: 使用的模型
+            model: 使用的模型（默认从统一配置读取 TEXT2SQL_MODEL）
         """
         self.llm_api_key = llm_api_key
         self.llm_base_url = llm_base_url
         self.db_connection_string = db_connection_string
-        self.model = model
+        self.model = model or settings.text2sql_model
         self.client = OpenAI(api_key=llm_api_key, base_url=llm_base_url)
         self.db_engine = None
 

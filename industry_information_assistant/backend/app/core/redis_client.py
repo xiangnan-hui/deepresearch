@@ -1,12 +1,13 @@
 """Redis 客户端"""
-import os
 import json
 from typing import Optional, Any
 import redis
 
-REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
-REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
-REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "") or None
+from config.settings import settings
+
+REDIS_HOST = settings.redis_host
+REDIS_PORT = settings.redis_port
+REDIS_PASSWORD = settings.redis_password
 
 # 创建 Redis 连接池
 redis_pool = redis.ConnectionPool(
@@ -14,7 +15,7 @@ redis_pool = redis.ConnectionPool(
     port=REDIS_PORT,
     password=REDIS_PASSWORD,
     decode_responses=True,
-    max_connections=20
+    max_connections=settings.redis_max_connections
 )
 
 
