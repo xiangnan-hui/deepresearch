@@ -19,6 +19,10 @@ from datetime import datetime
 
 from .base import BaseAgent
 from ..state import ResearchState, ResearchPhase
+try:
+    from harness.skills import FreshResearchSkill
+except ImportError:
+    from app.harness.skills import FreshResearchSkill
 
 # 网页文本提取库（可选依赖）
 try:
@@ -336,7 +340,11 @@ URL: {url}
             })
 
             # 执行搜索
-            results = await self._execute_search(query, count=8)
+            results = await self._execute_search(
+                query,
+                count=8,
+                freshness=self._search_freshness(state),
+            )
 
             if results:
                 # 分析结果
@@ -578,9 +586,13 @@ URL: {url}
         # 逐个执行搜索，每完成一个就发送事件（提升用户体验）
         all_results = []
         for i, query in enumerate(search_queries):
+            query = FreshResearchSkill.decorate_query(query, state.get("run_context", {}))
             # 网络搜索
             if search_web:
-                results = await self._execute_search(query)
+                results = await self._execute_search(
+                    query,
+                    freshness=self._search_freshness(state),
+                )
                 all_results.extend(results)
 
                 # 搜索完成后立即发送原始结果（让用户看到进度）
@@ -654,6 +666,12 @@ URL: {url}
             self.logger.warning(f"No search results for section: {section_title}")
             return
 
+        known_source_urls = {source.get("url") for source in state.get("raw_sources", [])}
+        for result in all_results:
+            if result.get("url") and result.get("url") not in known_source_urls:
+                state["raw_sources"].append(dict(result))
+                known_source_urls.add(result["url"])
+
         self.add_message(state, "thought", {
             "agent": self.name,
             "content": f"搜索完成，获得 {len(all_results)} 条结果，正在分析提取关键信息..."
@@ -680,6 +698,11 @@ URL: {url}
                     duplicate_facts += 1
                     continue
 
+                source_result = next(
+                    (item for item in all_results if item.get("url") == source_url),
+                    {},
+                )
+                published_at = fact.get("published_at") or fact.get("date") or source_result.get("date", "")
                 fact_entry = {
                     "id": f"fact_{uuid.uuid4().hex[:8]}",
                     "content": content,
@@ -692,7 +715,8 @@ URL: {url}
                     "verified": False,
                     "related_hypothesis": fact.get("related_hypothesis"),
                     "hypothesis_support": fact.get("hypothesis_support"),
-                    "metadata": {}
+                    "published_at": published_at,
+                    "metadata": {"published_at": published_at} if published_at else {}
                 }
                 state["facts"].append(fact_entry)
                 added_facts += 1
@@ -857,7 +881,11 @@ URL: {url}
 
         for query in queries:
             # 执行搜索
-            results = await self._execute_search(query, count=6)
+            results = await self._execute_search(
+                query,
+                count=6,
+                freshness=self._search_freshness(state),
+            )
 
             if not results:
                 continue
@@ -1078,10 +1106,23 @@ URL: {url}
             self.logger.error(f"Local search error for '{query}': {e}")
             return []
 
-    async def _execute_search(self, query: str, count: int = 10) -> List[Dict]:
+    @staticmethod
+    def _search_freshness(state: ResearchState) -> str:
+        return (
+            state.get("run_context", {})
+            .get("freshness", {})
+            .get("search_freshness", "noLimit")
+        )
+
+    async def _execute_search(
+        self,
+        query: str,
+        count: int = 10,
+        freshness: str = "noLimit",
+    ) -> List[Dict]:
         """执行网络搜索 - 使用 Bocha Web Search API"""
         # 检查缓存
-        cache_key = hashlib.md5(query.encode()).hexdigest()
+        cache_key = hashlib.md5(f"{query}|{count}|{freshness}".encode()).hexdigest()
         if cache_key in self.search_cache:
             self.logger.debug(f"Cache hit for query: {query[:30]}...")
             return self.search_cache[cache_key]
@@ -1092,7 +1133,7 @@ URL: {url}
                 "query": query,
                 "summary": True,
                 "count": count,
-                "freshness": "noLimit"
+                "freshness": freshness
             }
             headers = {
                 'Authorization': f'Bearer {self.search_api_key}',

@@ -14,6 +14,10 @@ from typing import AsyncGenerator, Dict, Any, Optional
 from datetime import datetime
 
 from .graph import DeepResearchGraph
+try:
+    from harness import ResearchHarness
+except ImportError:
+    from app.harness import ResearchHarness
 
 # 导入配置
 try:
@@ -86,6 +90,7 @@ class DeepResearchV2Service:
             deepscout_api_key=self.deepscout_api_key,
             deepscout_base_url=self.deepscout_base_url
         )
+        self.harness = ResearchHarness(self.graph, model=self.model)
 
         logger.info(f"DeepResearch V2 Service initialized with default model: {self.model}")
 
@@ -124,7 +129,7 @@ class DeepResearchV2Service:
             logger.info(f"Search modes - web: {search_web}, local: {search_local}")
 
         try:
-            async for event in self.graph.run(
+            async for event in self.harness.run(
                 query, session_id,
                 resume=resume,
                 user_id=user_id,
@@ -166,7 +171,7 @@ class DeepResearchV2Service:
         if not session_id:
             session_id = str(uuid.uuid4())
 
-        state = await self.graph.run_sync(query, session_id)
+        state = await self.harness.run_sync(query, session_id)
 
         return {
             "session_id": session_id,

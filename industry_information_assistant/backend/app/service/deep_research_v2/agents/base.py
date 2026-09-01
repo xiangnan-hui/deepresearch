@@ -8,12 +8,14 @@ DeepResearch V2.0 - Agent 基类
 
 import json
 import logging
-import asyncio
 import time
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List, Union
 from datetime import datetime
-from openai import OpenAI
+try:
+    from harness.model_gateway import ModelGateway
+except ImportError:
+    from app.harness.model_gateway import ModelGateway
 
 from ..state import ResearchState, AgentLog
 
@@ -49,7 +51,7 @@ class BaseAgent(ABC):
         self.role = role
         # 未显式传入模型时，从统一配置（.env）按 Agent 名解析，避免默认参数覆盖配置
         self.model = model if model else self._resolve_default_model(name)
-        self.client = OpenAI(api_key=llm_api_key, base_url=llm_base_url)
+        self.model_gateway = ModelGateway(llm_api_key, llm_base_url, self.model)
         self.logger = logging.getLogger(f"Agent.{name}")
 
     @classmethod
@@ -119,10 +121,7 @@ class BaseAgent(ABC):
             if json_mode:
                 kwargs["response_format"] = {"type": "json_object"}
 
-            response = await asyncio.to_thread(
-                self.client.chat.completions.create,
-                **kwargs
-            )
+            response = await self.model_gateway.complete(**kwargs)
 
             content = response.choices[0].message.content
             duration = int((time.time() - start_time) * 1000)
@@ -297,16 +296,6 @@ class BaseAgent(ABC):
                 self.logger.info(f"[SSE] Streamed custom event: {event_type}")
             except Exception as e:
                 self.logger.warning(f"Failed to stream custom event: {e}")
-        # 保留旧队列出口供非 LangGraph 的直接 Agent 调用兼容；v2 主流程不再使用它。
-        elif state.get("_message_queue") is not None:
-            try:
-                state["_message_queue"].put_nowait(message)
-                self.logger.info(
-                    f"[SSE] Queued event: {event_type} "
-                    f"(queue size: {state['_message_queue'].qsize()})"
-                )
-            except Exception as e:
-                self.logger.warning(f"Failed to push message to queue: {e}")
         else:
             self.logger.warning(f"[SSE] No stream writer available for event: {event_type}")
 

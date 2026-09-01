@@ -117,6 +117,8 @@ class ResearchState(TypedDict):
     phase: str                              # 当前阶段
     iteration: int                          # 当前迭代轮次
     max_iterations: int                     # 最大迭代次数
+    run_context: Dict[str, Any]             # Harness 注入的不可变运行上下文
+    quality_gates: Dict[str, Any]            # Harness/Graph 质量门结果
 
     # 搜索模式配置
     search_web: bool                        # 是否启用网络搜索
@@ -177,6 +179,8 @@ def create_initial_state(
         phase=ResearchPhase.INIT.value,
         iteration=0,
         max_iterations=3,
+        run_context={},
+        quality_gates={},
         search_web=search_web,
         search_local=search_local,
         outline=[],

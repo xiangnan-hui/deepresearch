@@ -16,6 +16,10 @@ from datetime import datetime
 
 from .base import BaseAgent
 from ..state import ResearchState, ResearchPhase
+try:
+    from harness.skills import FreshResearchSkill
+except ImportError:
+    from app.harness.skills import FreshResearchSkill
 
 
 class ChiefArchitect(BaseAgent):
@@ -189,7 +193,11 @@ class ChiefArchitect(BaseAgent):
         })
 
         # 调用LLM生成规划 - 带重试机制
-        prompt = self.PLANNING_PROMPT.format(query=state["query"])
+        run_context = state.get("run_context", {})
+        temporal_instruction = FreshResearchSkill.instruction(run_context)
+        if temporal_instruction:
+            temporal_instruction = f"\n\n{temporal_instruction}"
+        prompt = self.PLANNING_PROMPT.format(query=state["query"]) + temporal_instruction
         result = None
         max_retries = 2
 
