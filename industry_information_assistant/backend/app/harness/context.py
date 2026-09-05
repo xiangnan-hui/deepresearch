@@ -24,6 +24,10 @@ class FreshnessPolicy:
     @classmethod
     def from_query(cls, query: str) -> "FreshnessPolicy":
         normalized = query.casefold()
+        if any(term in normalized for term in ("最近一周", "近一周", "过去一周", "近7天", "最近7天", "last week")):
+            return cls(required=True, window_days=7, search_freshness="oneWeek", minimum_recent_sources=2)
+        if any(term in normalized for term in ("最近一个月", "近一个月", "过去一个月", "近30天", "最近30天", "last month")):
+            return cls(required=True, window_days=30, search_freshness="oneMonth", minimum_recent_sources=3)
         if any(term in normalized for term in _FRESHNESS_TERMS):
             return cls(
                 required=True,

@@ -108,6 +108,9 @@ export function chat(
   params: {
     session_id: string
     question: string
+    research_id?: string
+    search_knowledge?: boolean
+    search_web?: boolean
   },
   options?: AxiosRequestConfig,
 ) {
@@ -138,6 +141,55 @@ export function deepsearch(
     adapter: 'fetch',
     loading: false,
     ...options,
+  })
+}
+
+export interface InteractiveResearchState {
+  research_id: string
+  session_id: string
+  query: string
+  status: 'queued' | 'running' | 'paused' | 'completed' | 'cancelled' | 'failed'
+  current_stage: string
+  current_step: string
+  progress: number
+  plan_version: number
+  research_digest: Record<string, unknown>
+}
+
+/** 启动唯一的 LangGraph + ReAct 后台研究流程。 */
+export function startResearch(params: {
+  query: string
+  session_id?: string
+  search_modes?: string[]
+}) {
+  return request.post<{ research_id: string; session_id: string; status: string }>('/research/start', params, { loading: false })
+}
+
+export function getInteractiveResearchState(researchId: string) {
+  return request.get<InteractiveResearchState>(`/research/${researchId}/state`, { loading: false })
+}
+
+export function sendResearchCommand(researchId: string, type: string, payload: Record<string, unknown> = {}) {
+  return request.post(`/research/${researchId}/commands`, { type, payload }, { loading: false })
+}
+
+export const pauseResearch = (researchId: string) => sendResearchCommand(researchId, 'PAUSE')
+export const resumeResearch = (researchId: string) => sendResearchCommand(researchId, 'RESUME')
+export const recoverResearch = (researchId: string) =>
+  request.post<{ research_id: string; status: string }>(`/research/${researchId}/resume`, {}, { loading: false })
+export const addResearchConstraint = (researchId: string, constraint: string) =>
+  sendResearchCommand(researchId, 'ADD_CONSTRAINT', { constraint })
+
+export function researchEventsUrl(researchId: string, after = '0-0') {
+  return `/research/${researchId}/events?after=${encodeURIComponent(after)}`
+}
+
+export function researchEvents(researchId: string, after = '0-0') {
+  return request.get<ReadableStream>(researchEventsUrl(researchId, after), {
+    headers: { Accept: 'text/event-stream' },
+    responseType: 'stream',
+    adapter: 'fetch',
+    loading: false,
   })
 }
 

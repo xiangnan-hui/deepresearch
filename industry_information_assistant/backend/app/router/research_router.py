@@ -1,17 +1,18 @@
 
-from typing import Dict, Any, Optional, Literal
+from typing import Dict, Any, Optional
+import json
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.status import HTTP_200_OK, HTTP_400_BAD_REQUEST, HTTP_500_INTERNAL_SERVER_ERROR
 import logging
 
-from service import ResearchService, ServiceConfig
-from service.dr_g import serialize_event  # 导入序列化函数
-from core.redis_client import cache  # 导入 Redis 缓存
+from core.redis_client import cache
 
 # V2 导入
 from service.deep_research_v2.service import DeepResearchV2Service
+from harness.research_runtime import CommandType, get_research_runtime
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ResearchRouter")
@@ -32,7 +33,6 @@ class ResearchRequest(BaseModel):
     search_web: Optional[bool] = None  # 是否搜索网络 (兼容旧版)
     search_local: Optional[bool] = None  # 是否搜索本地知识库 (兼容旧版)
     search_modes: Optional[list] = None  # 搜索模式: ['web', 'local'] (新版)
-    version: Optional[Literal["v1", "v2"]] = "v2"  # 版本选择 (v2: 多智能体架构，推荐)
 
     class Config:
         json_schema_extra = {
@@ -42,7 +42,6 @@ class ResearchRequest(BaseModel):
                 "max_iterations": 3,
                 "kb_name": None,
                 "search_modes": ["web", "local"],
-                "version": "v2"
             }
         }
 
@@ -58,27 +57,98 @@ class ResearchRequest(BaseModel):
             return 'local' in self.search_modes
         return self.search_local if self.search_local is not None else False
 
-# 获取服务实例
-def get_research_service():
-    """获取研究服务实例"""
-    config = ServiceConfig.get_api_config()
-    research_service = ResearchService(
-        search_api_key=config.get('bochaai_api_key'),
-        llm_api_key=config.get('dashscope_api_key'),
-        llm_base_url=config.get('dashscope_base_url')
-    )
-    return {"research_service": research_service}
 
+class ResearchCommandRequest(BaseModel):
+    """对后台研究任务发送的控制命令。"""
+    type: CommandType
+    payload: Dict[str, Any] = Field(default_factory=dict)
+
+
+@router.post("/start", status_code=202)
+async def start_research(request: ResearchRequest):
+    """创建后台研究任务并立即返回，不占用长连接执行 Graph。"""
+    session_id = request.session_id or str(uuid.uuid4())
+    state = await get_research_runtime().start(
+        query=request.query,
+        session_id=session_id,
+        kb_name=request.kb_name,
+        search_web=request.get_search_web(),
+        search_local=request.get_search_local(),
+    )
+    return {"research_id": state["research_id"], "session_id": state["session_id"], "status": state["status"]}
+
+
+@router.get("/{research_id}/state")
+async def get_research_state(research_id: str):
+    state = await get_research_runtime().states.get(research_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Research task not found")
+    return state
+
+
+@router.get("/{research_id}/events")
+async def stream_research_events(research_id: str, after: str = Query("0-0")):
+    """订阅独立 Redis Stream；客户端断开不会终止后台研究。"""
+    runtime = get_research_runtime()
+    if not await runtime.states.get(research_id):
+        raise HTTPException(status_code=404, detail="Research task not found")
+
+    async def generate():
+        cursor = after
+        while True:
+            rows = await runtime.events.read(research_id, cursor)
+            if not rows:
+                yield ": heartbeat\n\n"
+                continue
+            for event_id, event in rows:
+                cursor = event_id
+                yield f"id: {event_id}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+                if event.get("type") in {"completed", "failed", "cancelled"}:
+                    yield "data: [DONE]\n\n"
+                    return
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@router.post("/{research_id}/commands", status_code=202)
+async def send_research_command(research_id: str, request: ResearchCommandRequest):
+    runtime = get_research_runtime()
+    state = await runtime.states.get(research_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Research task not found")
+    if state.get("status") in {"completed", "cancelled", "failed"}:
+        raise HTTPException(status_code=409, detail="Research task is already terminal")
+    command = await runtime.commands.publish(research_id, request.type, request.payload)
+    return {"accepted": True, "command": command}
+
+
+@router.post("/{research_id}/resume", status_code=202)
+async def resume_interactive_research(research_id: str):
+    """恢复暂停任务，或在进程重启后从最近业务 checkpoint 重新提交。"""
+    runtime = get_research_runtime()
+    state = await runtime.states.get(research_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Research task not found")
+    if state.get("status") == "completed":
+        raise HTTPException(status_code=409, detail="Research task is already completed")
+    if runtime.is_active(research_id):
+        command = await runtime.commands.publish(research_id, CommandType.RESUME, {})
+        return {"research_id": research_id, "status": state.get("status"), "command": command}
+    resumed = await runtime.start(
+        research_id=research_id,
+        query=state["query"],
+        session_id=state["session_id"],
+        resume=True,
+    )
+    return {"research_id": research_id, "status": resumed.get("status", "queued")}
 
 def get_research_service_v2():
-    """获取 V2 研究服务实例（使用配置文件中的模型设置）"""
-    # 直接创建服务，配置从 llm_config.py 读取
+    """获取唯一的 LangGraph 研究服务。"""
     return DeepResearchV2Service()
 
 @router.post("/stream", status_code=HTTP_200_OK)
 async def stream_research(
     request: ResearchRequest,
-    services: Dict[str, Any] = Depends(get_research_service)
 ):
     """
     深度研究接口 - 流式输出
@@ -86,9 +156,7 @@ async def stream_research(
     对用户的研究问题执行全面的深度研究，包括问题分解、网络搜索、信息整合、数据分析和报告生成。
     使用 Server-Sent Events (SSE) 格式流式返回整个研究过程和结果。
 
-    支持两个版本：
-    - v1: 传统 ReAct 架构
-    - v2: 多智能体协作网络（推荐）
+    兼容旧前端的流式接口，内部统一使用 LangGraph 工作流。
 
     Args:
         request: 包含研究问题和配置的请求体
@@ -96,51 +164,19 @@ async def stream_research(
     Returns:
         流式响应，包含研究过程和结果的 SSE 格式数据
     """
-    # 根据版本选择服务
-    if request.version == "v2":
-        search_web = request.get_search_web()
-        search_local = request.get_search_local()
-        logger.info(f"Using DeepResearch V2 for query: {request.query[:50]}... (session_id: {request.session_id}, search_web={search_web}, search_local={search_local})")
-        service_v2 = get_research_service_v2()
-
-        async def generate_sse_v2():
-            try:
-                async for event in service_v2.research(
-                    query=request.query,
-                    session_id=request.session_id,
-                    kb_name=request.kb_name,
-                    search_web=search_web,
-                    search_local=search_local
-                ):
-                    yield event
-            except Exception as e:
-                logger.error(f"V2 Research error: {e}")
-                error_event = serialize_event({"type": "error", "content": str(e)})
-                yield f"data: {error_event}\n\n"
-
-        return StreamingResponse(
-            generate_sse_v2(),
-            media_type="text/event-stream"
-        )
-
-    # V1 原有逻辑
-    research_service = services["research_service"]
-
+    service = get_research_service_v2()
     async def generate_sse():
         try:
-            async for event in research_service.research_stream(
+            async for event in service.research(
                 query=request.query,
-                max_iterations=request.max_iterations,
+                session_id=request.session_id,
                 kb_name=request.kb_name,
-                search_web=request.search_web,
-                search_local=request.search_local
+                search_web=request.get_search_web(),
+                search_local=request.get_search_local(),
             ):
-                # 将事件转换为 SSE 格式
-                yield f"data: {event}\n\n"
+                yield event
         except Exception as e:
-            # 使用serialize_event进行错误处理，确保JSON格式正确
-            error_event = serialize_event({"type": "error", "content": str(e)})
-            yield f"data: {error_event}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'content': str(e)}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         generate_sse(),
@@ -154,8 +190,6 @@ async def stream_research_get(
     kb_name: Optional[str] = Query(None, description="本地知识库名称"),
     search_web: bool = Query(True, description="是否搜索网络"),
     search_local: bool = Query(True, description="是否搜索本地知识库"),
-    version: str = Query("v1", description="版本: v1 或 v2"),
-    services: Dict[str, Any] = Depends(get_research_service)
 ):
     """
     深度研究接口 - GET方式流式输出
@@ -163,58 +197,26 @@ async def stream_research_get(
     对用户的研究问题执行全面的深度研究，包括问题分解、网络搜索、信息整合、数据分析和报告生成。
     使用 Server-Sent Events (SSE) 格式流式返回整个研究过程和结果。
 
-    支持两个版本：
-    - v1: 传统 ReAct 架构
-    - v2: 多智能体协作网络（推荐）
+    兼容 GET 调用，内部统一使用 LangGraph 工作流。
 
     Args:
         query: 研究问题
         max_iterations: 最大迭代次数（范围：1-5）
-        version: 版本选择 (v1 或 v2)
-
     Returns:
         流式响应，包含研究过程和结果的 SSE 格式数据
     """
-    # 根据版本选择服务
-    if version == "v2":
-        logger.info(f"Using DeepResearch V2 (GET) for query: {query[:50]}...")
-        service_v2 = get_research_service_v2()
-
-        async def generate_sse_v2():
-            try:
-                async for event in service_v2.research(
-                    query=query,
-                    kb_name=kb_name
-                ):
-                    yield event
-            except Exception as e:
-                logger.error(f"V2 Research error: {e}")
-                error_event = serialize_event({"type": "error", "content": str(e)})
-                yield f"data: {error_event}\n\n"
-
-        return StreamingResponse(
-            generate_sse_v2(),
-            media_type="text/event-stream"
-        )
-
-    # V1 原有逻辑
-    research_service = services["research_service"]
-
+    service = get_research_service_v2()
     async def generate_sse():
         try:
-            async for event in research_service.research_stream(
+            async for event in service.research(
                 query=query,
-                max_iterations=max_iterations,
                 kb_name=kb_name,
                 search_web=search_web,
                 search_local=search_local
             ):
-                # 将事件转换为 SSE 格式
-                yield f"data: {event}\n\n"
+                yield event
         except Exception as e:
-            # 使用serialize_event进行错误处理，确保JSON格式正确
-            error_event = serialize_event({"type": "error", "content": str(e)})
-            yield f"data: {error_event}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'content': str(e)}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         generate_sse(),
@@ -498,8 +500,7 @@ async def resume_research(session_id: str):
                     yield event
             except Exception as e:
                 logger.error(f"Resume research error: {e}")
-                error_event = serialize_event({"type": "error", "content": str(e)})
-                yield f"data: {error_event}\n\n"
+                yield f"data: {json.dumps({'type': 'error', 'content': str(e)}, ensure_ascii=False)}\n\n"
 
         return StreamingResponse(
             generate_sse(),

@@ -16,6 +16,7 @@ from datetime import datetime
 
 from .base import BaseAgent
 from ..state import ResearchState, ResearchPhase
+from ..quality_gate import DeterministicQualityGate
 
 
 class CriticMaster(BaseAgent):
@@ -161,12 +162,34 @@ class CriticMaster(BaseAgent):
             "content": "开始严格审核研究报告，准备找出所有问题..."
         })
 
-        # 执行审核
-        self.logger.info(f"[CriticMaster] 开始调用 _review_content...")
-        review_result = await self._review_content(state)
+        # 第一层使用确定性规则；硬性缺口不消耗语义审核调用。
+        gate = DeterministicQualityGate.evaluate(state)
+        state.setdefault("quality_gates", {})["deterministic_review"] = gate
+        critic_calls = int(state["quality_gates"].get("critic_llm_calls", 0))
+        if not gate["passed"]:
+            review_result = self._gate_as_review(gate)
+        elif critic_calls >= 1:
+            review_result = self._gate_as_review(gate)
+        else:
+            self.logger.info(f"[CriticMaster] 开始调用 _review_content...")
+            review_result = await self._review_content(state)
+            state["quality_gates"]["critic_llm_calls"] = critic_calls + 1
+        review_result = self._normalize_verdict(review_result)
+        state["quality_gates"]["critic_verdict"] = review_result.get("route_verdict", "REVISE")
         self.logger.info(f"[CriticMaster] 审核完成，结果: {bool(review_result)}")
 
         if review_result:
+            # 只有 Critic 明确验证通过的事实才能从 tentative 晋升为 confirmed。
+            fact_by_id = {fact.get("id"): fact for fact in state.get("facts", [])}
+            for check in review_result.get("fact_check_results", []):
+                fact = fact_by_id.get(check.get("fact_id"))
+                if fact and check.get("status") == "verified":
+                    fact["verified"] = True
+                    self.add_message(state, "finding_confirmed", {
+                        **fact,
+                        "verification_reason": check.get("reason", ""),
+                    })
+
             # 记录反馈
             for issue in review_result.get("issues", []):
                 issue["id"] = f"issue_{uuid.uuid4().hex[:8]}"
@@ -181,6 +204,7 @@ class CriticMaster(BaseAgent):
             self.add_message(state, "review", {
                 "agent": self.name,
                 "verdict": review_result.get("overall_assessment", {}).get("verdict"),
+                "route_verdict": review_result.get("route_verdict", "REVISE"),
                 "quality_score": state["quality_score"],
                 "issues_count": len(review_result.get("issues", [])),
                 "critical_issues": len([i for i in review_result.get("issues", []) if i.get("severity") == "critical"]),
@@ -215,11 +239,14 @@ class CriticMaster(BaseAgent):
             else:
                 # 智能路由：判断是需要补充搜索还是仅修改文字
                 needs_new_search = self._analyze_issues_for_routing(review_result)
+                route_verdict = review_result.get("route_verdict", "REVISE")
 
-                if needs_new_search["should_research"]:
+                if route_verdict == "RESEARCH" or needs_new_search["should_research"]:
                     # 需要补充搜索 -> 回到研究阶段
                     state["phase"] = ResearchPhase.RE_RESEARCHING.value
-                    state["pending_search_queries"] = needs_new_search["search_queries"]
+                    state["pending_search_queries"] = needs_new_search["search_queries"] or [
+                        f"{state.get('query', '')} 权威来源 原始数据"
+                    ]
                     self.add_message(state, "thought", {
                         "agent": self.name,
                         "content": f"发现信息缺失问题，需要补充搜索: {', '.join(needs_new_search['search_queries'][:3])}"
@@ -231,6 +258,40 @@ class CriticMaster(BaseAgent):
                 state["iteration"] += 1
 
         return state
+
+    def _normalize_verdict(self, review: Dict[str, Any]) -> Dict[str, Any]:
+        assessment = review.setdefault("overall_assessment", {})
+        raw = str(assessment.get("verdict", "")).strip().lower()
+        if raw in {"pass", "passed", "approved", "ready"}:
+            route = "PASS"
+        elif raw in {"research", "needs_research", "needs_more_research"}:
+            route = "RESEARCH"
+        elif raw in {"revise", "needs_revision", "needs_more_work"}:
+            route = "REVISE"
+        else:
+            route = "RESEARCH" if self._analyze_issues_for_routing(review)["should_research"] else "REVISE"
+        review["route_verdict"] = route
+        assessment["verdict"] = "pass" if route == "PASS" else "needs_revision"
+        return review
+
+    @staticmethod
+    def _gate_as_review(gate: Dict[str, Any]) -> Dict[str, Any]:
+        verdict = gate.get("verdict", "REVISE")
+        legacy_verdict = "pass" if verdict == "PASS" else "needs_revision"
+        return {
+            "overall_assessment": {
+                "verdict": legacy_verdict,
+                "quality_score": 8.0 if verdict == "PASS" else 4.0,
+                "summary": f"确定性质量门：{verdict}",
+            },
+            "route_verdict": verdict,
+            "issues": gate.get("issues", []),
+            "missing_aspects": [
+                issue.get("description", "") for issue in gate.get("issues", [])
+                if verdict == "RESEARCH" and issue.get("issue_type") in {"missing_source", "outdated"}
+            ],
+            "fact_check_results": [],
+        }
 
     def _analyze_issues_for_routing(self, review_result: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -324,7 +385,8 @@ class CriticMaster(BaseAgent):
             user_prompt=prompt,
             json_mode=True,
             temperature=0.2,
-            max_tokens=16000  # 拉满到最大值
+            max_tokens=5000,
+            operation_name="semantic_review",
         )
         self.logger.info(f"[CriticMaster] LLM 响应长度: {len(response)}")
 

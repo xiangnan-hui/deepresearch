@@ -10,6 +10,7 @@ DeepResearch V2.0 - 首席笔杆 Agent (LeadWriter)
 4. 参考文献 - 规范的引用格式
 """
 
+import asyncio
 import uuid
 from typing import Dict, Any, List
 from datetime import datetime
@@ -53,6 +54,9 @@ class LeadWriter(BaseAgent):
 ### 相关图表
 {charts_info}
 
+### 时效要求
+{temporal_requirement}
+
 ## 写作要求
 1. **专业性**：使用行业术语，体现专业深度
 2. **逻辑性**：论点清晰，论据充分，层层递进
@@ -61,6 +65,8 @@ class LeadWriter(BaseAgent):
 5. **图表整合**：在合适位置插入图表引用 ![图表标题](chart_id)
 6. **字数控制**：本章节 500-1000 字
 7. **不要重复标题**：正文开头不要再写章节标题
+8. **证据边界**：证据仅有搜索摘要时使用“据该来源摘要”措辞，不得扩写摘要中没有的结论
+9. **时效区分**：严格区分近期事件、历史背景和未来预测，禁止把旧资料包装为近期进展
 
 ## 输出格式
 ```json
@@ -246,13 +252,17 @@ class LeadWriter(BaseAgent):
             "content": "开始撰写深度研究报告..."
         })
 
-        # 逐章节撰写
-        for section in state["outline"]:
-            if section.get("status") not in ["final", "drafted"]:
+        # 分章节并发写作以提升聚焦度；最终由 Python 拼接，避免额外整合调用。
+        semaphore = asyncio.Semaphore(3)
+
+        async def write_one(section: Dict) -> None:
+            if section.get("status") in ["final", "drafted"]:
+                return
+            async with semaphore:
                 await self._write_section(state, section)
 
-        # 整合报告
-        await self._synthesize_report(state)
+        await asyncio.gather(*(write_one(section) for section in state["outline"]))
+        self._assemble_report(state)
 
         # 发送 research_step 完成事件
         word_count = len(state.get("final_report", ""))
@@ -273,6 +283,109 @@ class LeadWriter(BaseAgent):
 
         return state
 
+    def _assemble_report(self, state: ResearchState) -> None:
+        parts = [f"# {state['query']}\n"]
+        insights = [str(item).strip() for item in state.get("insights", []) if str(item).strip()]
+        if insights:
+            parts.append("## 核心结论\n\n" + "\n".join(f"- {item}" for item in insights[:5]))
+        for index, section in enumerate(state.get("outline", []), start=1):
+            content = state.get("draft_sections", {}).get(section.get("id", ""), "").strip()
+            if content:
+                parts.append(f"## {index} {section.get('title', '')}\n\n{content}")
+
+        sources = []
+        seen_urls = set()
+        for fact in sorted(
+            state.get("facts", []),
+            key=lambda item: float(item.get("credibility_score", 0.5) or 0.5),
+            reverse=True,
+        ):
+            url = str(fact.get("source_url", "")).strip()
+            if not url or url in seen_urls:
+                continue
+            seen_urls.add(url)
+            sources.append(f"- [{fact.get('source_name') or url}]({url})")
+        if sources:
+            parts.append("## 参考来源\n\n" + "\n".join(sources[:30]))
+        state["final_report"] = "\n\n---\n\n".join(parts)
+        self.add_message(state, "report_draft", {
+            "agent": self.name, "content": state["final_report"],
+            "executive_summary": "\n".join(insights[:3]), "conclusions": insights[:5],
+            "word_count": len(state["final_report"]),
+            "references_count": len(sources),
+        })
+
+    async def _write_full_report(self, state: ResearchState) -> None:
+        outline = "\n".join(
+            f"{index + 1}. {section.get('title', '')}: {section.get('description', '')}"
+            for index, section in enumerate(state.get("outline", []))
+        )
+        evidence = "\n".join(
+            f"- [{fact.get('evidence_id') or fact.get('id', '')}] {fact.get('content', '')} "
+            f"（{fact.get('source_name', '')}，{fact.get('source_url', '')}）"
+            for fact in state.get("facts", [])[:40]
+        )
+        data_points = "\n".join(
+            f"- {row.get('name')}: {row.get('value')} {row.get('unit', '')}，来源 {row.get('source', '')}"
+            for row in state.get("data_points", [])[:20]
+        )
+        prompt = f"""请直接撰写完整 Markdown 研究报告，不要输出 JSON 或代码围栏。
+
+主题：{state['query']}
+大纲：
+{outline}
+
+证据：
+{evidence or '暂无证据'}
+
+数据：
+{data_points or '暂无结构化数据'}
+
+要求：严格按大纲使用二级标题；关键事实就近标注 [evidence_id]；不得虚构来源；最后给出“参考来源”列表。"""
+        report = await self.call_llm(
+            system_prompt="你是严谨的行业研究报告作者，正文使用 Markdown。",
+            user_prompt=prompt,
+            json_mode=False,
+            temperature=0.3,
+            max_tokens=12000,
+            operation_name="write_full_markdown_report",
+        )
+        state["final_report"] = report.strip()
+        state["draft_sections"] = self._split_sections(state["final_report"], state.get("outline", []))
+        for section in state.get("outline", []):
+            section_id = section.get("id", "")
+            content = state["draft_sections"].get(section_id, "")
+            section["status"] = "drafted" if content else section.get("status", "pending")
+            if content:
+                self.add_message(state, "section_content", {
+                    "agent": self.name, "section_id": section_id,
+                    "section_title": section.get("title", ""), "content": content,
+                    "word_count": len(content), "key_points": [],
+                })
+        self.add_message(state, "report_draft", {
+            "agent": self.name, "content": state["final_report"],
+            "executive_summary": "", "conclusions": [],
+            "word_count": len(state["final_report"]),
+            "references_count": len(state.get("references", [])),
+        })
+
+    @staticmethod
+    def _split_sections(report: str, outline: List[Dict]) -> Dict[str, str]:
+        """Best-effort deterministic split used only for legacy section_content events."""
+        positions = []
+        lowered = report.lower()
+        for section in outline:
+            title = str(section.get("title", "")).strip()
+            index = lowered.find(title.lower()) if title else -1
+            if index >= 0:
+                positions.append((index, section.get("id", "")))
+        positions.sort()
+        result = {}
+        for index, (start, section_id) in enumerate(positions):
+            end = positions[index + 1][0] if index + 1 < len(positions) else len(report)
+            result[section_id] = report[start:end].strip()
+        return result
+
     async def _write_section(self, state: ResearchState, section: Dict) -> None:
         """撰写单个章节"""
         section_id = section["id"]
@@ -288,12 +401,34 @@ class LeadWriter(BaseAgent):
         related_facts = [f for f in state["facts"] if section_id in f.get("related_sections", [])]
         if not related_facts:
             # 如果没有特定关联，使用所有事实
-            related_facts = state["facts"][:10]
+            related_facts = state["facts"]
+        else:
+            authoritative = [
+                fact for fact in state["facts"]
+                if fact.get("source_type") in {"official", "academic", "report"}
+            ]
+            by_id = {
+                fact.get("evidence_id") or fact.get("id"): fact
+                for fact in [*related_facts, *authoritative]
+            }
+            related_facts = list(by_id.values())
+        related_facts = sorted(
+            related_facts,
+            key=lambda item: (
+                item.get("source_type") in {"official", "academic", "report"},
+                float(item.get("credibility_score", 0.5) or 0.5),
+            ),
+            reverse=True,
+        )[:12]
 
         # 格式化事实
         facts_text = []
         for fact in related_facts:
-            facts_text.append(f"- {fact.get('content')} (来源: {fact.get('source_name')}, 可信度: {fact.get('credibility_score')})")
+            evidence_id = fact.get("evidence_id") or fact.get("id", "")
+            facts_text.append(
+                f"- [{evidence_id}] {fact.get('content')} "
+                f"(来源: {fact.get('source_name')}, URL: {fact.get('source_url', '')}, 可信度: {fact.get('credibility_score')})"
+            )
 
         # 格式化数据点
         data_text = []
@@ -314,7 +449,8 @@ class LeadWriter(BaseAgent):
             facts="\n".join(facts_text) if facts_text else "（暂无相关事实）",
             data_points="\n".join(data_text) if data_text else "（暂无数据点）",
             insights="\n".join([f"- {i}" for i in state["insights"][:5]]) if state["insights"] else "（暂无洞察）",
-            charts_info="\n".join(charts_info) if charts_info else "（暂无图表）"
+            charts_info="\n".join(charts_info) if charts_info else "（暂无图表）",
+            temporal_requirement=self._temporal_requirement(state),
         )
 
         response = await self.call_llm(
@@ -322,10 +458,15 @@ class LeadWriter(BaseAgent):
             user_prompt=prompt,
             json_mode=True,
             temperature=0.4,
-            max_tokens=16000  # 拉满到最大值
+            max_tokens=5000,
+            operation_name="write_section",
         )
 
         result = self.parse_json_response(response)
+
+        # 部分兼容模型会忽略 JSON Mode 直接返回 Markdown；保留正文而不是丢弃章节。
+        if not result.get("content") and response.strip() and not response.lstrip().startswith("{"):
+            result = {"content": response.strip().strip("`"), "key_points": [], "citations": []}
 
         if result and result.get("content"):
             section_content = result["content"]
@@ -356,6 +497,19 @@ class LeadWriter(BaseAgent):
                 "agent": self.name,
                 "content": f"章节「{section.get('title')}」撰写完成\n字数: {len(section_content)}\n要点: {', '.join(result.get('key_points', [])[:2]) if result.get('key_points') else '无'}"
             })
+
+    @staticmethod
+    def _temporal_requirement(state: ResearchState) -> str:
+        context = state.get("run_context", {})
+        freshness = context.get("freshness", {})
+        current_time = context.get("current_time", "")
+        if not freshness.get("required"):
+            return "无额外时间窗口限制。"
+        days = freshness.get("window_days")
+        return (
+            f"当前时间为 {current_time}，主要结论必须来自最近 {days} 天内的资料。"
+            "较早资料只能用于背景，并须明确标注其日期；不得把历史消息描述成近期进展。"
+        )
 
     async def _synthesize_report(self, state: ResearchState) -> None:
         """整合完整报告"""

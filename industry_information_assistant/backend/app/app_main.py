@@ -56,6 +56,11 @@ async def lifespan(app: FastAPI):
         scheduler.stop()
     except Exception as e:
         logger.error(f"定时任务调度器关闭失败: {e}")
+    try:
+        from harness.research_runtime import get_research_runtime
+        await get_research_runtime().shutdown()
+    except Exception as e:
+        logger.error(f"研究运行时关闭失败: {e}")
 
 
 app = FastAPI(

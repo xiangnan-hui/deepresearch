@@ -56,6 +56,7 @@ export default function Index() {
   const researchDetailsRef = useRef<Map<string, ResearchDetailData>>(new Map())
   // 版本计数器 - 用于触发 aggregatedResearchData 重新计算
   const [researchDataVersion, setResearchDataVersion] = useState(0)
+  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false)
 
   // 同步 researchSteps 到 ref
   useEffect(() => {
@@ -76,7 +77,8 @@ export default function Index() {
   }
 
   const loading = useMemo(() => {
-    return list.some((o) => o.loading)
+    // Deep Research 已在后台 Worker 中运行，不应锁住聊天输入框。
+    return list.some((o) => o.loading && o.type !== ChatType.Deepsearch)
   }, [list])
   const loadingRef = useRef(loading)
   loadingRef.current = loading
@@ -94,6 +96,54 @@ export default function Index() {
   // 用于取消请求的 ref
   const readerRef = useRef<ReadableStreamDefaultReader<any> | null>(null)
   const currentSessionIdRef = useRef<string | null>(null)
+  const currentResearchIdRef = useRef<string | null>(null)
+
+  // 页面刷新后保留后台任务关联；恢复展示由 checkpoint/state 加载逻辑完成。
+  useEffect(() => {
+    if (!id) return
+    const researchId = localStorage.getItem(`active-research:${id}`)
+    currentResearchIdRef.current = researchId
+    if (!researchId) return
+
+    const after = localStorage.getItem(`research-event:${researchId}`) || '0-0'
+    const baseUrl = String(import.meta.env.VITE_API_BASE || '').replace(/\/$/, '')
+    const source = new EventSource(`${baseUrl}${api.session.researchEventsUrl(researchId, after)}`)
+    source.onmessage = event => {
+      if (event.lastEventId) localStorage.setItem(`research-event:${researchId}`, event.lastEventId)
+      if (event.data === '[DONE]') {
+        source.close()
+        return
+      }
+      try {
+        const envelope = JSON.parse(event.data)
+        const researchEvent = envelope.payload?.type ? envelope.payload : envelope
+        const target = [...chat.list].reverse().find(item => item.type === ChatType.Deepsearch)
+        if (!target) return
+        target.researchId = researchId
+        if (researchEvent.type === 'phase') {
+          target.loading = true
+          target.think = `研究正在进行：${researchEvent.phase}`
+        }
+        if (researchEvent.type === 'research_complete') {
+          target.content = researchEvent.final_report || target.content
+          target.loading = false
+          localStorage.removeItem(`active-research:${id}`)
+          localStorage.removeItem(`research-event:${researchId}`)
+          currentResearchIdRef.current = null
+          source.close()
+        }
+        if (['failed', 'cancelled'].includes(envelope.type)) {
+          target.loading = false
+          target.error = envelope.payload?.error || envelope.type
+          source.close()
+        }
+      } catch (error) {
+        console.error('[research recovery] 事件解析失败', error)
+      }
+    }
+    source.onerror = () => console.warn('[research recovery] SSE 暂时断开，浏览器将自动重连')
+    return () => source.close()
+  }, [id, chat])
 
   // 停止生成
   const handleStop = useCallback(async () => {
@@ -111,9 +161,9 @@ export default function Index() {
     }
 
     // 调用后端取消 API
-    if (currentSessionIdRef.current) {
+    if (currentResearchIdRef.current) {
       try {
-        await api.session.cancelResearch(currentSessionIdRef.current)
+        await api.session.sendResearchCommand(currentResearchIdRef.current, 'CANCEL')
         console.log('[handleStop] 后端取消请求已发送')
       } catch (e) {
         console.error('[handleStop] 调用取消 API 失败:', e)
@@ -222,16 +272,30 @@ export default function Index() {
 
   const sendChat = useCallback(
     async (target: API.ChatItem, message: string, attachmentIds?: string[]) => {
-      setCurrentChatItem(target)
+      // Fast follow-up 不能抢占正在执行的研究上下文，否则右侧详情会消失。
+      if (!target.researchId) setCurrentChatItem(target)
       target.loading = true
       try {
         let res
-        if (target.type === ChatType.Deepsearch) {
-          res = await api.session.deepsearch({
+        if (target.researchId && target.type === ChatType.Normal) {
+          res = await api.session.chat({
+            session_id: id!,
+            research_id: target.researchId,
+            question: message,
+            search_knowledge: false,
+            search_web: false,
+          })
+        } else if (target.type === ChatType.Deepsearch) {
+          const started = await api.session.startResearch({
             query: message,
             session_id: id,  // 传递会话 ID 用于检查点保存
             search_modes: deviceState.searchModes as string[],  // 传递搜索模式
           })
+          const researchId = started.data.research_id
+          target.researchId = researchId
+          currentResearchIdRef.current = researchId
+          if (id) localStorage.setItem(`active-research:${id}`, researchId)
+          res = await api.session.researchEvents(researchId)
         } else if (attachmentIds && attachmentIds.length > 0) {
           // 使用带附件的聊天接口
           res = await api.session.chatWithAttachments({
@@ -246,14 +310,27 @@ export default function Index() {
           })
         }
 
-        const reader = res.data.getReader()
+        let reader = res.data.getReader()
         if (!reader) return
 
         // 存储 reader 和 session ID 用于取消
         readerRef.current = reader
         currentSessionIdRef.current = id || null
 
-        await read(reader)
+        let afterEventId = '0-0'
+        while (true) {
+          const readResult = await read(reader, afterEventId)
+          afterEventId = readResult.lastEventId
+          if (target.type !== ChatType.Deepsearch || readResult.terminal || !target.researchId) break
+
+          // 网络中断时查询后台状态；任务仍运行则从最后一个 Redis Stream ID 续传。
+          const state = await api.session.getInteractiveResearchState(target.researchId)
+          if (['completed', 'cancelled', 'failed'].includes(state.data.status)) break
+          await new Promise(resolve => setTimeout(resolve, 1000))
+          const resumed = await api.session.researchEvents(target.researchId, afterEventId)
+          reader = resumed.data.getReader()
+          readerRef.current = reader
+        }
 
         // 清理 reader ref
         readerRef.current = null
@@ -263,8 +340,10 @@ export default function Index() {
         target.loading = false
       }
 
-      async function read(reader: ReadableStreamDefaultReader<any>) {
+      async function read(reader: ReadableStreamDefaultReader<any>, initialEventId = '0-0') {
         let temp = ''
+        let lastEventId = initialEventId
+        let terminal = false
         const decoder = new TextDecoder('utf-8')
         while (true) {
           const { value, done } = await reader.read()
@@ -277,7 +356,11 @@ export default function Index() {
             const slice = temp.slice(0, index)
             temp = temp.slice(index + 1)
 
+            if (slice.startsWith('id: ')) {
+              lastEventId = slice.slice(4).trim()
+            }
             if (slice.startsWith('data: ')) {
+              if (slice.trim() === 'data: [DONE]') terminal = true
               parseData(slice)
               scrollToBottom()
             }
@@ -289,6 +372,7 @@ export default function Index() {
             break
           }
         }
+        return { lastEventId, terminal }
       }
 
       function parseData(slice: string) {
@@ -301,7 +385,11 @@ export default function Index() {
             return
           }
 
-          const json = JSON.parse(str)
+          let json = JSON.parse(str)
+          // 新 Runtime Event 使用统一信封；内部 payload 保持旧 UI 事件兼容。
+          if (json.payload && typeof json.payload === 'object' && json.payload.type) {
+            json = json.payload
+          }
           if (target.type === ChatType.Deepsearch) {
             // 辅助函数：从 V2 格式中提取实际内容
             const extractContent = (data: any): string => {
@@ -586,7 +674,7 @@ export default function Index() {
             }
 
             // V2 研究完成事件
-            if (json.type === 'research_complete') {
+          if (json.type === 'research_complete') {
               console.log('研究完成事件:', json)
               // 设置最终报告为内容
               if (json.final_report) {
@@ -625,6 +713,8 @@ export default function Index() {
               // 确保触发重新计算
               console.log(`[前端] research_complete: ✅ 研究完成，强制触发 researchDataVersion 更新`)
               setResearchDataVersion(v => v + 1)
+              if (id) localStorage.removeItem(`active-research:${id}`)
+              currentResearchIdRef.current = null
             }
 
             // 检测 ReAct 模式
@@ -1087,7 +1177,9 @@ export default function Index() {
 
   const send = useCallback(
     async (message: string, attachmentIds?: string[]) => {
-      if (loadingRef.current) return
+      const activeResearchId = currentResearchIdRef.current
+      const isResearchFollowup = Boolean(activeResearchId)
+      if (loadingRef.current && !isResearchFollowup) return
       if (!message && (!attachmentIds || attachmentIds.length === 0)) return
 
       chat.list.push({
@@ -1095,12 +1187,17 @@ export default function Index() {
         role: ChatRole.User,
         type: ChatType.Normal,
         content: message || '(附件问答)',
+        researchFollowup: isResearchFollowup,
       })
 
       chat.list.push({
         id: createChatId(),
         role: ChatRole.Assistant,
-        type: (deviceState.searchModes as string[]).length > 0 ? ChatType.Deepsearch : ChatType.Normal,
+        type: isResearchFollowup
+          ? ChatType.Normal
+          : (deviceState.searchModes as string[]).length > 0 ? ChatType.Deepsearch : ChatType.Normal,
+        researchId: isResearchFollowup ? activeResearchId || undefined : undefined,
+        researchFollowup: isResearchFollowup,
         content: '',
       })
       scrollToBottom()
@@ -1596,6 +1693,9 @@ export default function Index() {
     return null
   }, [currentChatItem, selectedStepDetail, isDeepResearchMode, aggregatedResearchData, researchSteps, handleResearchStepClick])
 
+  const primaryMessages = list.filter(item => !item.researchFollowup)
+  const researchFollowups = list.filter(item => item.researchFollowup)
+
   return (
     <ComPageLayout
       sender={
@@ -1608,13 +1708,24 @@ export default function Index() {
             onUploadAttachment={handleUploadAttachment}
             onRemoveAttachment={handleRemoveAttachment}
           />
+          {isDeepResearchMode && (
+            <button className={styles['research-panel-toggle']} type="button" onClick={() => setRightPanelCollapsed(value => !value)}>
+              {rightPanelCollapsed ? '展开研究过程' : '收起研究过程'}
+            </button>
+          )}
         </>
       }
-      right={rightPanelContent}
-      wideRight={isDeepResearchMode}
+      right={rightPanelCollapsed ? null : rightPanelContent}
+      wideRight={isDeepResearchMode && !rightPanelCollapsed}
     >
       <div className={styles['chat-page']}>
-        <ChatMessage list={list} onSend={send} onStepClick={handleStepClick} />
+        <ChatMessage list={primaryMessages} onSend={send} onStepClick={handleStepClick} />
+        {researchFollowups.length > 0 && (
+          <details className={styles['research-followups']}>
+            <summary>研究期间追问（{Math.ceil(researchFollowups.length / 2)}）</summary>
+            <ChatMessage list={researchFollowups} onSend={send} onStepClick={handleStepClick} />
+          </details>
+        )}
       </div>
     </ComPageLayout>
   )

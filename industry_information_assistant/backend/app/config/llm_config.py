@@ -5,7 +5,7 @@ LLM 和 Agent 配置文件
 集中管理所有 LLM 相关配置，所有值均来自统一配置模块 config.settings（环境变量），
 包括：
 - DeepSeek V4 配置（5 个核心 Agent 共用的 API Key、Base URL）
-- DeepScout 独立配置（API Key、Base URL、模型 qwen3.7-plus-2026-05-26）
+- DeepScout 独立配置（API Key、Base URL、模型 glm-5.2）
 - DashScope 配置（Embedding / Rerank / 长期记忆 / V1 流程）
 - 每个 Agent 节点的模型配置
 - 研究流程参数
@@ -16,7 +16,7 @@ Agent 模型映射（可通过 .env 覆盖）：
     CodeWizard     -> DEEPSEEK V4 (CODE_WIZARD_MODEL)
     LeadWriter     -> DEEPSEEK V4 (LEAD_WRITER_MODEL)
     CriticMaster   -> DEEPSEEK V4 (CRITIC_MASTER_MODEL)
-    DeepScout      -> qwen3.7-plus-2026-05-26 (DEEPSCOUT_MODEL)
+    DeepScout      -> glm-5.2 (DEEPSCOUT_MODEL)
 
 使用方式:
     from app.config.llm_config import LLMConfig, AgentConfig
@@ -57,7 +57,7 @@ class AgentsConfig:
         max_tokens=4000
     ))
 
-    # 深度侦探 - 深度搜索（qwen3.7-plus-2026-05-26，独立 Key/Base URL）
+    # 深度侦探 - 深度搜索（glm-5.2，独立 Key/Base URL）
     scout: AgentModelConfig = field(default_factory=lambda: AgentModelConfig(
         model=settings.deepscout_model,
         temperature=0.5,

@@ -16,6 +16,8 @@
 - 数据分析与可视化：支持结构化数据分析、图表生成和前端展示。
 - 行业信息：包含行业新闻、招投标、股票和政策检索等扩展模块。
 - 任务恢复：研究状态可保存至检查点，支持查询和恢复。
+- 交互式研究运行时：后台执行、独立事件流、共享状态、研究摘要和安全点命令。
+- 单一研究主线：LangGraph 负责编排，DeepScout 在 Research 节点内部执行有限 ReAct 循环。
 
 ## 总体架构
 
@@ -273,6 +275,20 @@ Plan
 ```
 
 长节点调用 `Agent.add_message()` 时，Graph 注入的 `StreamWriter` 会立即发送 LangGraph `custom` 事件。因此不需要等待整个搜索或写作节点完成，前端就能持续看到进度；节点完成后的状态变更则通过 `updates` stream 处理。
+
+Deep Research 现在只有一套实现：Harness → LangGraph。探索型的 ReAct（观察证据、判断缺口、补充搜索）位于 DeepScout 节点内部，不再维护独立的 V1 ReAct 工作流。
+
+交互式接口：
+
+| 接口 | 用途 |
+|---|---|
+| `POST /research/start` | 创建后台研究并立即返回 `research_id` |
+| `GET /research/{research_id}/state` | 获取进度、阶段和 Digest |
+| `GET /research/{research_id}/events` | 订阅可断线重连的 Redis Stream SSE |
+| `POST /research/{research_id}/commands` | 发送暂停、恢复、取消或 steering 命令 |
+| `POST /research/stream` | 旧前端兼容入口，同样执行唯一 LangGraph 流程 |
+
+研究执行期间，聊天请求携带 `research_id` 后由 Fast Research Agent 处理。明确的进度查询、事实查询和控制指令使用本地规则快速返回；复杂问题使用轻量模型结合 Digest、findings 与最近搜索结果回答，且不会重新启动或等待后台研究。
 
 ## “最新资料”处理机制
 

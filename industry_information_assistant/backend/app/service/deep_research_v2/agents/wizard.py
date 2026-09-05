@@ -354,6 +354,10 @@ df = df.dropna()
         self.logger.info(f"[CodeWizard] ========== process 开始 ==========")
         self.logger.info(f"[CodeWizard] 当前 phase: {state['phase']}, data_points: {len(state['data_points'])}, outline: {len(state['outline'])}")
 
+        if not self._requires_complex_analysis(state):
+            self.logger.info("[CodeWizard] 仅包含常规图表/摘要，确定性路由跳过 CodeWizard LLM")
+            return state
+
         if state["phase"] != ResearchPhase.ANALYZING.value:
             # 检查是否有需要分析的数据
             if len(state["data_points"]) >= 3:
@@ -380,6 +384,18 @@ df = df.dropna()
 
         self.logger.info(f"[CodeWizard] ========== process 结束 ==========")
         return state
+
+    @staticmethod
+    def _requires_complex_analysis(state: ResearchState) -> bool:
+        explicit = state.get("run_context", {}).get("requires_complex_analysis")
+        if explicit is not None:
+            return bool(explicit)
+        text = " ".join([
+            state.get("query", ""),
+            *[str(section.get("description", "")) for section in state.get("outline", [])],
+        ]).lower()
+        complex_markers = ("预测", "回归", "统计检验", "蒙特卡洛", "敏感性分析", "forecast", "regression")
+        return len(state.get("data_points", [])) >= 3 and any(marker in text for marker in complex_markers)
 
     async def _analyze_data(self, state: ResearchState) -> None:
         """分析数据"""

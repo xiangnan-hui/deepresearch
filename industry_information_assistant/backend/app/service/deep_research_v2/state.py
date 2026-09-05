@@ -114,11 +114,14 @@ class ResearchState(TypedDict):
     # 基础信息
     query: str                              # 用户原始问题
     session_id: str                         # 会话ID
+    research_id: str                        # 单次研究运行 ID
     phase: str                              # 当前阶段
     iteration: int                          # 当前迭代轮次
     max_iterations: int                     # 最大迭代次数
     run_context: Dict[str, Any]             # Harness 注入的不可变运行上下文
     quality_gates: Dict[str, Any]            # Harness/Graph 质量门结果
+    plan_version: int                       # 用户 steering 后递增
+    user_constraints: List[str]             # 当前研究约束
 
     # 搜索模式配置
     search_web: bool                        # 是否启用网络搜索
@@ -176,11 +179,14 @@ def create_initial_state(
     return ResearchState(
         query=query,
         session_id=session_id,
+        research_id="",
         phase=ResearchPhase.INIT.value,
         iteration=0,
         max_iterations=3,
         run_context={},
         quality_gates={},
+        plan_version=1,
+        user_constraints=[],
         search_web=search_web,
         search_local=search_local,
         outline=[],

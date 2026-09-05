@@ -19,6 +19,7 @@ from datetime import datetime
 
 from .base import BaseAgent
 from ..state import ResearchState, ResearchPhase
+from ..evidence import EvidenceAdapter
 try:
     from harness.skills import FreshResearchSkill
 except ImportError:
@@ -185,6 +186,8 @@ URL: {url}
         )
         self.search_api_key = search_api_key
         self.search_cache: Dict[str, List] = {}
+        self.search_requests = 0
+        self.search_cache_hits = 0
         self.fact_fingerprints: Dict[str, str] = {}  # 事实指纹用于去重
 
         # 搜索服务配置（从统一配置读取，兼容直接运行脚本）
@@ -282,6 +285,10 @@ URL: {url}
 
         await asyncio.gather(*tasks)
 
+        # 在 LangGraph 的 Research 节点内部执行 ReAct：观察已有证据、
+        # 判断信息缺口，并按需采取补充搜索动作。Graph 仍负责外层阶段编排。
+        await self._react_reflect_and_search(state)
+
         # 发送 research_step 完成事件
         self.add_message(state, "research_step", {
             "step_type": "searching",
@@ -296,8 +303,84 @@ URL: {url}
 
         # 发送搜索结果事件供前端详情面板展示
         self._emit_search_results_event(state)
+        self.add_message(state, "search_metrics", {
+            "search_count": self.search_requests,
+            "search_cache_hits": self.search_cache_hits,
+        })
 
         return state
+
+    async def _react_reflect_and_search(self, state: ResearchState) -> None:
+        """有限 ReAct 循环，避免把旧 V1 控制器整套复制进新工作流。"""
+        self.add_message(state, "react_start", {
+            "agent": self.name,
+            "content": "开始评估现有证据是否足以覆盖研究计划",
+            "mode": "graph_node",
+        })
+        sufficiency = self._deterministic_sufficiency(state)
+        self.add_message(state, "observation", {
+            "agent": self.name, "step": 0, "content": sufficiency["reason"],
+            "can_answer": sufficiency["sufficient"], "gaps": sufficiency["gaps"],
+        })
+        if sufficiency["sufficient"]:
+            return
+
+        # 规则无法确认充分性时最多进行一轮语义反思。
+        for step in range(1):
+            facts = state.get("facts", [])
+            fact_summary = "\n".join(
+                f"- {item.get('content', '')[:180]}" for item in facts[-20:]
+            ) or "暂无事实"
+            prompt = f"""评估当前资料能否回答研究问题，并找出最关键的信息缺口。
+研究问题：{state['query']}
+当前事实：
+{fact_summary}
+
+只输出 JSON：
+{{"can_answer": true, "reason": "判断理由", "new_queries": ["最多3个补充搜索词"]}}"""
+            response = await self.call_llm(
+                system_prompt="你是研究侦察员。基于观察决定是否继续搜索，不要输出隐藏推理过程。",
+                user_prompt=prompt,
+                json_mode=True,
+                temperature=0.2,
+                max_tokens=1200,
+                operation_name="reflect_evidence_gap",
+            )
+            reflection = self.parse_json_response(response)
+            queries = [str(q) for q in reflection.get("new_queries", []) if q][:3]
+            self.add_message(state, "observation", {
+                "agent": self.name,
+                "step": step + 1,
+                "content": reflection.get("reason", "已评估当前证据"),
+                "can_answer": bool(reflection.get("can_answer")),
+                "gaps": queries,
+            })
+            if reflection.get("can_answer") or not queries:
+                break
+            self.add_message(state, "action", {
+                "agent": self.name,
+                "step": step + 1,
+                "tool": "supplementary_search",
+                "queries": queries,
+            })
+            state["pending_search_queries"] = queries
+            await self._supplementary_research(state)
+            state["phase"] = ResearchPhase.RESEARCHING.value
+
+    @staticmethod
+    def _deterministic_sufficiency(state: ResearchState) -> Dict[str, Any]:
+        facts = state.get("facts", [])
+        outline = state.get("outline", [])
+        valid_sources = {fact.get("source_url") for fact in facts if str(fact.get("source_url", "")).startswith(("http://", "https://"))}
+        covered = {section_id for fact in facts for section_id in fact.get("related_sections", [])}
+        required = {section.get("id") for section in outline[:3] if section.get("id")}
+        gaps = [section.get("title", "") for section in outline[:3] if section.get("id") not in covered]
+        sufficient = bool(required) and required.issubset(covered) and len(valid_sources) >= max(3, len(required))
+        return {
+            "sufficient": sufficient,
+            "gaps": gaps,
+            "reason": f"规则检查：{len(covered)}/{len(required)} 个核心章节有证据，{len(valid_sources)} 个有效来源",
+        }
 
     async def _supplementary_research(self, state: ResearchState) -> ResearchState:
         """
@@ -347,12 +430,7 @@ URL: {url}
             )
 
             if results:
-                # 分析结果
-                analysis = await self._analyze_supplementary_results(
-                    state["query"],
-                    query,
-                    results
-                )
+                analysis = self._adapt_search_results(results, "supplementary")
 
                 if analysis:
                     # 添加新事实
@@ -362,7 +440,8 @@ URL: {url}
 
                         if not self._is_duplicate_fact(content, source_url):
                             fact_entry = {
-                                "id": f"fact_{uuid.uuid4().hex[:8]}",
+                                "id": fact.get("id") or f"fact_{uuid.uuid4().hex[:8]}",
+                                "evidence_id": fact.get("id", ""),
                                 "content": content,
                                 "source_url": source_url,
                                 "source_name": fact.get("source_name", ""),
@@ -372,6 +451,7 @@ URL: {url}
                                 "related_sections": []
                             }
                             state["facts"].append(fact_entry)
+                            self.add_message(state, "finding_tentative", fact_entry)
 
         # 清空待搜索列表
         state["pending_search_queries"] = []
@@ -677,13 +757,9 @@ URL: {url}
             "content": f"搜索完成，获得 {len(all_results)} 条结果，正在分析提取关键信息..."
         })
 
-        # 分析搜索结果（传入假设以便验证）
-        analysis = await self._analyze_search_results(
-            state["query"],
-            section,
-            all_results,
-            hypotheses=state.get("hypotheses", [])
-        )
+        # 搜索 API 已返回稳定字段，直接由 Python Adapter 标准化为证据；
+        # 数字、实体和关系在后续 DataAnalyst 的单次抽取中统一处理。
+        analysis = self._adapt_search_results(all_results, section_id)
 
         if analysis:
             # 提取事实（带去重）
@@ -704,7 +780,8 @@ URL: {url}
                 )
                 published_at = fact.get("published_at") or fact.get("date") or source_result.get("date", "")
                 fact_entry = {
-                    "id": f"fact_{uuid.uuid4().hex[:8]}",
+                    "id": fact.get("id") or f"fact_{uuid.uuid4().hex[:8]}",
+                    "evidence_id": fact.get("id", ""),
                     "content": content,
                     "source_url": source_url,
                     "source_name": fact.get("source_name", ""),
@@ -719,6 +796,7 @@ URL: {url}
                     "metadata": {"published_at": published_at} if published_at else {}
                 }
                 state["facts"].append(fact_entry)
+                self.add_message(state, "finding_tentative", fact_entry)
                 added_facts += 1
 
                 # 提取数据点
@@ -841,6 +919,24 @@ URL: {url}
         # 更新章节状态
         section["status"] = "researching"
 
+    @staticmethod
+    def _adapt_search_results(results: List[Dict], section_id: str) -> Dict[str, Any]:
+        evidence = EvidenceAdapter.normalize_many(results)
+        extracted = []
+        for item in evidence:
+            item["id"] = item.pop("evidence_id")
+            item["related_sections"] = [section_id]
+            extracted.append(item)
+        return {
+            "extracted_facts": extracted,
+            "entities_discovered": [],
+            "hypothesis_evidence": [],
+            "key_insights": [],
+            "source_quality_assessment": "由工具 Adapter 归一化，语义提取延迟到 DataAnalyst",
+            "source_tracing_queries": [],
+            "follow_up_queries": [],
+        }
+
     async def _execute_deep_search(
         self,
         state: ResearchState,
@@ -909,6 +1005,13 @@ URL: {url}
                 "depth": depth
             })
 
+            self.add_message(state, "search_progress", {
+                "query": query,
+                "stage": "evidence_analysis",
+                "content": f"正在分析 {len(results)} 条搜索结果并提取可验证事实",
+                "depth": depth,
+            })
+
             # 分析结果
             analysis = await self._analyze_deep_search_results(
                 state["query"],
@@ -940,6 +1043,7 @@ URL: {url}
                         "search_type": search_type
                     }
                     state["facts"].append(fact_entry)
+                    self.add_message(state, "finding_tentative", fact_entry)
                     added_facts += 1
 
                     # 更新假设证据（如果有）
@@ -1123,7 +1227,9 @@ URL: {url}
         """执行网络搜索 - 使用 Bocha Web Search API"""
         # 检查缓存
         cache_key = hashlib.md5(f"{query}|{count}|{freshness}".encode()).hexdigest()
+        self.search_requests += 1
         if cache_key in self.search_cache:
+            self.search_cache_hits += 1
             self.logger.debug(f"Cache hit for query: {query[:30]}...")
             return self.search_cache[cache_key]
 

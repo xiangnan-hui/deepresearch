@@ -70,6 +70,7 @@ class LegacySessionResponse(BaseModel):
 class ChatRequest(BaseModel):
     """聊天请求"""
     session_id: Optional[str] = Field(None, description="会话ID，用于记录对话历史")
+    research_id: Optional[str] = Field(None, description="关联的后台研究任务 ID")
     question: str = Field(..., description="用户问题")
     search_knowledge: bool = Field(True, description="是否搜索知识库")
     search_web: bool = Field(True, description="是否搜索网络")
@@ -123,4 +124,4 @@ class ChatWithAttachmentsRequest(BaseModel):
     question: str = Field(..., description="用户问题")
     attachment_ids: Optional[List[str]] = Field(None, description="附件ID列表")
     search_knowledge: bool = Field(True, description="是否搜索知识库")
-    search_web: bool = Field(True, description="是否搜索网络") 
+    search_web: bool = Field(True, description="是否搜索网络")

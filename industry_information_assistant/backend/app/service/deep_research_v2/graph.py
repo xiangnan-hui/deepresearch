@@ -12,17 +12,6 @@ import logging
 from typing import Dict, Any, List, Literal, AsyncGenerator
 from datetime import datetime
 
-# 导入取消检查函数
-try:
-    from router.research_router import clear_cancel_flag
-except ImportError:
-    try:
-        from app.router.research_router import clear_cancel_flag
-    except ImportError:
-        # 兼容直接运行脚本的情况
-        def clear_cancel_flag(session_id: str):
-            pass
-
 # LangGraph 导入 - 如果没有安装则使用简化版本
 try:
     from langgraph.graph import StateGraph, END
@@ -114,7 +103,7 @@ class DeepResearchGraph:
         # 使用传入参数或配置默认值（5 个核心 Agent -> DeepSeek）
         self.llm_api_key = llm_api_key or config.api_key
         self.llm_base_url = llm_base_url or config.base_url
-        # DeepScout 独立配置（qwen3.7-plus-2026-05-26）
+        # DeepScout 独立配置（glm-5.2）
         self.deepscout_api_key = deepscout_api_key or config.deepscout_api_key
         self.deepscout_base_url = deepscout_base_url or config.deepscout_base_url
         self.search_api_key = search_api_key or config.search_api_key
@@ -170,14 +159,14 @@ class DeepResearchGraph:
         state: Dict[str, Any],
         user_id: str = None,
         ui_state: Dict[str, Any] = None
-    ) -> bool:
+    ) -> str:
         """保存检查点（包含后端状态和 UI 状态）"""
         if not self.checkpoint_service:
-            return False
+            return ""
 
         session_id = state.get("session_id", "")
         if not session_id:
-            return False
+            return ""
 
         try:
             checkpoint_id = self.checkpoint_service.save_checkpoint(
@@ -189,11 +178,11 @@ class DeepResearchGraph:
             )
             if checkpoint_id:
                 logger.info(f"Checkpoint saved: {checkpoint_id}")
-                return True
+                return checkpoint_id
         except Exception as e:
             logger.warning(f"Failed to save checkpoint: {e}")
 
-        return False
+        return ""
 
     def _load_checkpoint(self, session_id: str) -> Dict[str, Any]:
         """加载检查点"""
@@ -275,6 +264,14 @@ class DeepResearchGraph:
         # 显式绑定 config 后，StreamWriter 才能在长节点内部持续发送事件。
         context_token = var_child_runnable_config.set(config)
         try:
+            from harness.model_gateway import set_model_context, reset_model_context
+        except ImportError:
+            from app.harness.model_gateway import set_model_context, reset_model_context
+        model_context_token = set_model_context(
+            research_id=state.get("research_id", ""),
+            session_id=state.get("session_id", ""),
+        )
+        try:
             state = dict(state)
             state["phase"] = phase.value
             state["_stream_writer"] = writer
@@ -282,6 +279,7 @@ class DeepResearchGraph:
             result = dict(await agent.process(state))
         finally:
             state.pop("_stream_writer", None)
+            reset_model_context(model_context_token)
             var_child_runnable_config.reset(context_token)
         result.pop("_stream_writer", None)
         return result
@@ -375,6 +373,9 @@ class DeepResearchGraph:
         search_web: bool = True,
         search_local: bool = False,
         run_context: Dict[str, Any] = None,
+        research_id: str = "",
+        user_constraints: List[str] = None,
+        plan_version: int = 1,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         执行研究流程（流式输出）
@@ -420,6 +421,11 @@ class DeepResearchGraph:
                 "timestamp": datetime.now().isoformat()
             }
 
+        if research_id:
+            state["research_id"] = research_id
+        state["user_constraints"] = list(user_constraints or state.get("user_constraints", []))
+        state["plan_version"] = plan_version
+
         # Harness context belongs to the run, not to an individual Agent.
         # On resume, the new context refreshes current_time while retaining graph state.
         if run_context:
@@ -442,9 +448,6 @@ class DeepResearchGraph:
     async def _run_with_langgraph(self, state: ResearchState) -> AsyncGenerator[Dict[str, Any], None]:
         """使用 LangGraph 执行，并转发节点内部 custom 事件。"""
         session_id = state.get("session_id", "")
-        if session_id:
-            clear_cancel_flag(session_id)
-
         try:
             # custom: Agent.add_message() 的实时事件
             # updates: 节点完成后的状态更新
@@ -472,13 +475,14 @@ class DeepResearchGraph:
                         if not isinstance(node_state, dict):
                             continue
                         state.update(node_state)
-                        self._save_checkpoint(state, user_id=state.get("_user_id"))
+                        checkpoint_id = self._save_checkpoint(state, user_id=state.get("_user_id"))
                         # 对前端暴露统一的节点完成事件，不传输完整 state。
                         yield {
                             "type": "node_completed",
                             "node": node_name,
                             "phase": node_state.get("phase", ""),
                             "session_id": session_id,
+                            "checkpoint_id": checkpoint_id or None,
                         }
 
             freshness_result = self.freshness_evaluator.evaluate(state)
@@ -531,9 +535,13 @@ class DeepResearchGraph:
 
         # 依次执行各阶段
         state = await self.architect.process(state)
+        state["phase"] = ResearchPhase.RESEARCHING.value
         state = await self.scout.process(state)
+        state["phase"] = ResearchPhase.ANALYZING.value
         state = await self.data_analyst.process(state)
+        state["phase"] = ResearchPhase.ANALYZING.value
         state = await self.wizard.process(state)
+        state["phase"] = ResearchPhase.WRITING.value
         state = await self.writer.process(state)
 
         # 审核修订循环（支持智能路由）

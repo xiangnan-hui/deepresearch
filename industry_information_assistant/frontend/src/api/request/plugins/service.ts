@@ -19,6 +19,11 @@ export const servicePlugin: IRequestPlugin = {
         if (!(CODE_KEY in data)) return response
 
         const code = data[CODE_KEY]
+        // `status` 也被研究任务等业务对象使用（queued/running/completed）。
+        // 只有明确的通用响应信封状态才按 API 成功码处理。
+        if (code !== 'success' && code !== 'error' && code !== 'failed') {
+          return response
+        }
         if (code !== 'success') {
           const message =
             data[MESSAGE_KEY] || data.detail || 'API data exception'
@@ -36,6 +41,9 @@ export const servicePlugin: IRequestPlugin = {
         if (!(CODE_KEY in data)) return Promise.reject(error)
 
         const code = data[CODE_KEY]
+        if (code !== 'success' && code !== 'error' && code !== 'failed') {
+          return Promise.reject(error)
+        }
         if (code !== 'success') {
           const message =
             data[MESSAGE_KEY] || data.detail || 'API data exception'

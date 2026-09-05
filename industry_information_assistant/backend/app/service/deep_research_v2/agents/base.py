@@ -90,7 +90,9 @@ class BaseAgent(ABC):
         user_prompt: str,
         json_mode: bool = True,
         temperature: float = 0.3,
-        max_tokens: int = 16000  # 拉满到最大值
+        max_tokens: int = 16000,
+        operation_name: str = "complete",
+        retry_count: int = 0,
     ) -> str:
         """
         调用 LLM
@@ -121,7 +123,14 @@ class BaseAgent(ABC):
             if json_mode:
                 kwargs["response_format"] = {"type": "json_object"}
 
-            response = await self.model_gateway.complete(**kwargs)
+            response = await self.model_gateway.complete(
+                metric_context={
+                    "agent_name": self.name,
+                    "operation_name": operation_name,
+                    "retry_count": retry_count,
+                },
+                **kwargs,
+            )
 
             content = response.choices[0].message.content
             duration = int((time.time() - start_time) * 1000)

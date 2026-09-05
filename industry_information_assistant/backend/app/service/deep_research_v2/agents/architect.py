@@ -197,9 +197,14 @@ class ChiefArchitect(BaseAgent):
         temporal_instruction = FreshResearchSkill.instruction(run_context)
         if temporal_instruction:
             temporal_instruction = f"\n\n{temporal_instruction}"
-        prompt = self.PLANNING_PROMPT.format(query=state["query"]) + temporal_instruction
+        constraints = state.get("user_constraints", [])
+        constraint_instruction = ""
+        if constraints:
+            constraint_instruction = "\n\n用户追加约束（必须体现在计划中）：\n- " + "\n- ".join(constraints)
+        prompt = self.PLANNING_PROMPT.format(query=state["query"]) + temporal_instruction + constraint_instruction
         result = None
-        max_retries = 2
+        # 解析失败由本地容错与确定性兜底处理，不为格式问题重复消耗模型调用。
+        max_retries = 0
 
         for attempt in range(max_retries + 1):
             response = await self.call_llm(
@@ -207,7 +212,9 @@ class ChiefArchitect(BaseAgent):
                 user_prompt=prompt,
                 json_mode=True,
                 temperature=0.3,
-                max_tokens=16000  # 拉满到最大值
+                max_tokens=5000,
+                operation_name="create_research_plan",
+                retry_count=attempt,
             )
 
             # Debug: 记录原始响应
@@ -250,10 +257,9 @@ class ChiefArchitect(BaseAgent):
 
 要求：outline必须包含5-8个章节，覆盖市场概况、企业竞争、技术趋势、政策环境、未来展望等方面。"""
 
-        if not result:
-            state["errors"].append("Failed to generate research plan after retries")
-            self.logger.error(f"Raw LLM response: {response[:800]}")
-            return state
+        if not result or not result.get("outline"):
+            state["errors"].append("LLM plan parsing failed; deterministic fallback applied")
+            result = self._fallback_plan(state["query"])
 
         # Debug: log outline count
         self.logger.info(f"Parsed result keys: {list(result.keys())}")
@@ -323,6 +329,26 @@ class ChiefArchitect(BaseAgent):
         self.logger.info(f"Planning completed. Generated {len(outline)} sections.")
 
         return state
+
+    @staticmethod
+    def _fallback_plan(query: str) -> Dict[str, Any]:
+        sections = [
+            ("核心进展", "梳理最重要的新事实与时间线"),
+            ("关键参与者", "比较主要机构、企业或研究团队"),
+            ("技术与数据", "分析技术指标、证据和可量化变化"),
+        ]
+        return {
+            "outline": [
+                {
+                    "id": f"sec_{index + 1}", "title": title,
+                    "description": description, "section_type": "mixed",
+                    "requires_data": index == 2, "requires_chart": index == 2,
+                    "search_queries": [f"{query} {title}"],
+                }
+                for index, (title, description) in enumerate(sections)
+            ],
+            "research_questions": [query], "key_entities": [], "mind_map": {}, "hypotheses": [],
+        }
 
     async def _check_revision(self, state: ResearchState) -> ResearchState:
         """检查是否需要修订大纲"""

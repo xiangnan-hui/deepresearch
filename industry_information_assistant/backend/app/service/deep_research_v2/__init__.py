@@ -1,7 +1,7 @@
 
 
 """
-DeepResearch V2.0 - 生成式多智能体协作网络
+DeepResearch - 唯一的生成式多智能体协作网络
 
 核心特点：
 1. 5个专家Agent协作：架构师、侦探、极客、评论家、笔杆
@@ -12,9 +12,9 @@ DeepResearch V2.0 - 生成式多智能体协作网络
 
 使用方式：
 ```python
-from service.deep_research_v2 import DeepResearchService
+from service.deep_research_v2.service import DeepResearchV2Service
 
-service = DeepResearchService(
+service = DeepResearchV2Service(
     llm_api_key="${DEEPSEEK_API_KEY}",
     llm_base_url="${DEEPSEEK_BASE_URL}",
     search_api_key="${BOCHA_API_KEY}"

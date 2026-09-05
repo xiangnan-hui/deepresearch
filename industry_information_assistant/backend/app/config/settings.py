@@ -89,16 +89,16 @@ class Settings:
             default="https://dashscope.aliyuncs.com/compatible-mode/v1"
         )
         # DashScope 默认对话模型（长期记忆 / V1 研究流程 / 通用聊天）
-        self.dashscope_model: str = _get_str("DASHSCOPE_MODEL", default="qwen3.7-plus")
+        self.dashscope_model: str = _get_str("DASHSCOPE_MODEL", default="glm-5.2")
         # 聊天服务模型（兼容旧变量 OPENAI_MODEL）
-        self.chat_model: str = _get_str("OPENAI_MODEL", "DASHSCOPE_MODEL", default="qwen3.7-plus")
+        self.chat_model: str = _get_str("OPENAI_MODEL", "DASHSCOPE_MODEL", default="glm-5.2")
         # 聊天服务 Base URL（兼容旧变量 OPENAI_BASE_URL）
         self.chat_base_url: str = _get_str(
             "OPENAI_BASE_URL", "DASHSCOPE_BASE_URL",
             default="https://dashscope.aliyuncs.com/compatible-mode/v1"
         )
         # V1 研究流程最终综合报告使用的模型
-        self.research_synthesis_model: str = _get_str("RESEARCH_SYNTHESIS_MODEL", default="deepseek-r1")
+        self.research_synthesis_model: str = _get_str("RESEARCH_SYNTHESIS_MODEL", default="glm-5.2")
         # OpenRouter（可选，保留旧变量兼容）
         self.openrouter_api_key: str = _get_str("OPENROUTER_API_KEY")
 
@@ -108,23 +108,23 @@ class Settings:
         # 可在调用层传入覆盖参数（graph/service 构造函数均支持）。
         self.deepseek_api_key: str = _get_str("DEEPSEEK_API_KEY")
         self.deepseek_base_url: str = _get_str("DEEPSEEK_BASE_URL", default="https://api.deepseek.com")
-        self.deepseek_default_model: str = _get_str("DEEPSEEK_DEFAULT_MODEL", default="deepseek-v4")
-        # 各 Agent 模型名（默认均为 deepseek-v4）
-        self.chief_architect_model: str = _get_str("CHIEF_ARCHITECT_MODEL", default="deepseek-v4")
-        self.data_analyst_model: str = _get_str("DATA_ANALYST_MODEL", default="deepseek-v4")
-        self.code_wizard_model: str = _get_str("CODE_WIZARD_MODEL", default="deepseek-v4")
-        self.lead_writer_model: str = _get_str("LEAD_WRITER_MODEL", default="deepseek-v4")
-        self.critic_master_model: str = _get_str("CRITIC_MASTER_MODEL", default="deepseek-v4")
+        self.deepseek_default_model: str = _get_str("DEEPSEEK_DEFAULT_MODEL", default="glm-5.2")
+        # 各生成式 Agent 模型名（默认统一为 glm-5.2）
+        self.chief_architect_model: str = _get_str("CHIEF_ARCHITECT_MODEL", default="glm-5.2")
+        self.data_analyst_model: str = _get_str("DATA_ANALYST_MODEL", default="glm-5.2")
+        self.code_wizard_model: str = _get_str("CODE_WIZARD_MODEL", default="glm-5.2")
+        self.lead_writer_model: str = _get_str("LEAD_WRITER_MODEL", default="glm-5.2")
+        self.critic_master_model: str = _get_str("CRITIC_MASTER_MODEL", default="glm-5.2")
 
         # ==================== LLM - DeepScout（深度侦探，独立配置） ====================
-        # DeepScout 使用 qwen3.7-plus-2026-05-26；
+        # DeepScout 默认使用 glm-5.2；
         # 未单独配置 DEEPSCOUT_API_KEY / DEEPSCOUT_BASE_URL 时回退到 DashScope 配置。
         self.deepscout_api_key: str = _get_str("DEEPSCOUT_API_KEY", "DASHSCOPE_API_KEY")
         self.deepscout_base_url: str = _get_str(
             "DEEPSCOUT_BASE_URL", "DASHSCOPE_BASE_URL",
             default="https://dashscope.aliyuncs.com/compatible-mode/v1"
         )
-        self.deepscout_model: str = _get_str("DEEPSCOUT_MODEL", default="qwen3.7-plus-2026-05-26")
+        self.deepscout_model: str = _get_str("DEEPSCOUT_MODEL", default="glm-5.2")
 
         # ==================== Embedding / Rerank ====================
         self.embedding_model: str = _get_str("EMBEDDING_MODEL", default="text-embedding-v4")
@@ -239,7 +239,7 @@ class Settings:
         self.session_max_messages: int = _get_int("SESSION_MAX_MESSAGES", default=20)
 
         # ==================== Text2SQL ====================
-        self.text2sql_model: str = _get_str("TEXT2SQL_MODEL", default="qwen3.7-plus")
+        self.text2sql_model: str = _get_str("TEXT2SQL_MODEL", default="glm-5.2")
 
         # ==================== 应用服务 ====================
         self.app_host: str = _get_str("APP_HOST", default="0.0.0.0")

@@ -17,12 +17,25 @@ interface AuthState {
 
 const AUTH_STORAGE_KEY = 'auth'
 
+function isTokenExpired(token: string): boolean {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
+    return typeof payload.exp === 'number' && payload.exp * 1000 <= Date.now()
+  } catch {
+    return true
+  }
+}
+
 // 从 localStorage 加载初始状态
 function loadAuthState(): AuthState {
   try {
     const saved = localStorage.getItem(AUTH_STORAGE_KEY)
     if (saved) {
-      return JSON.parse(saved)
+      const parsed = JSON.parse(saved) as Partial<AuthState>
+      if (parsed.token && parsed.user && parsed.isLoggedIn && !isTokenExpired(parsed.token)) {
+        return parsed as AuthState
+      }
+      localStorage.removeItem(AUTH_STORAGE_KEY)
     }
   } catch (e) {
     console.error('Failed to load auth state:', e)

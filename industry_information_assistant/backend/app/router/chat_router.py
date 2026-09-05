@@ -141,6 +141,26 @@ async def chat_completion_v2(
     default_dataset_id = services["default_dataset_id"]
     session_service = services["session_service"]
 
+    # Fast Agent 路径：只读取共享状态与摘要，不等待或重启 Deep Research。
+    if request.research_id:
+        try:
+            from harness.research_runtime import get_research_runtime
+        except ImportError:
+            from app.harness.research_runtime import get_research_runtime
+        runtime = get_research_runtime()
+        try:
+            result = await runtime.fast_agent.respond(request.research_id, request.question)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Research task not found")
+        answer = result["answer"]
+
+        async def generate_research_answer():
+            import json
+            yield f"data: {json.dumps({'role': 'assistant', 'content': answer, 'intent': result.get('intent')}, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(generate_research_answer(), media_type="text/event-stream")
+
     # 验证会话ID（如果提供）
     if request.session_id:
         session = session_service.get_session(request.session_id)

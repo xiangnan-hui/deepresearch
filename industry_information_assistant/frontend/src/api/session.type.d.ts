@@ -6,6 +6,8 @@ declare namespace API {
     role: import('@/configs').ChatRole
     type: import('@/configs').ChatType
     loading?: boolean
+    researchId?: string
+    researchFollowup?: boolean
     error?: string
     content?: string
     think?: string
