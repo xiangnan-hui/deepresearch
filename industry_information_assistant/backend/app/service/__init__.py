@@ -1,26 +1,26 @@
 
 
-from .document_service import DocumentService
-from .config import ServiceConfig
-from .web_search_service import WebSearchService
-from .chat_service import ChatService
-from .session_service import SessionService
-from .policy_search_service import PolicySearchService
-from .text2sql_service import Text2SQLService, create_text2sql_service
-from .smart_analyzer import SmartDataAnalyzer, create_smart_analyzer
-from .chart_generator import ChartGenerator, create_chart_generator
+"""Service package with compatibility-preserving lazy exports."""
 
-__all__ = [
-    'DocumentService',
-    'ServiceConfig',
-    'WebSearchService',
-    'ChatService',
-    'SessionService',
-    'PolicySearchService',
-    'Text2SQLService',
-    'create_text2sql_service',
-    'SmartDataAnalyzer',
-    'create_smart_analyzer',
-    'ChartGenerator',
-    'create_chart_generator',
-]
+from importlib import import_module
+
+_EXPORTS = {
+    "DocumentService": ("document_service", "DocumentService"),
+    "ServiceConfig": ("config", "ServiceConfig"),
+    "WebSearchService": ("web_search_service", "WebSearchService"),
+    "ChatService": ("chat_service", "ChatService"),
+    "SessionService": ("session_service", "SessionService"),
+    "Text2SQLService": ("text2sql_service", "Text2SQLService"),
+    "create_text2sql_service": ("text2sql_service", "create_text2sql_service"),
+}
+
+__all__ = list(_EXPORTS)
+
+
+def __getattr__(name):
+    if name not in _EXPORTS:
+        raise AttributeError(name)
+    module_name, attribute = _EXPORTS[name]
+    value = getattr(import_module(f"{__name__}.{module_name}"), attribute)
+    globals()[name] = value
+    return value

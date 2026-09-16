@@ -11,7 +11,6 @@ from llama_index.postprocessor.dashscope_rerank import DashScopeRerank
 import tiktoken
 
 from config.settings import settings
-from .document_service import DocumentService
 from .web_search_service import WebSearchService
 from .session_service import SessionService
 from .memory_service import get_memory_service
@@ -20,16 +19,14 @@ from .memory_service import get_memory_service
 class ChatService:
     """Chat service that combines document retrieval and LLM generation"""
 
-    def __init__(self, document_service: DocumentService, web_search_service: WebSearchService, session_service: SessionService):
+    def __init__(self, web_search_service: WebSearchService, session_service: SessionService):
         """
         Initialize the ChatService.
 
         Args:
-            document_service: Document service for knowledge base retrieval
             web_search_service: Web search service for internet search
             session_service: Session service for chat history management
         """
-        self.document_service = document_service
         self.web_search_service = web_search_service
         self.session_service = session_service
         self.openai_api_key = settings.dashscope_api_key
@@ -37,48 +34,6 @@ class ChatService:
         self.openai_model = settings.chat_model
         self.encoding = tiktoken.get_encoding("cl100k_base")  # OpenAI通用编码
         self.max_tokens = settings.chat_max_tokens  # 最大token数量限制
-    
-    def retrieve_from_knowledge_base(self, question: str, dataset_id: str) -> List[Dict[str, Any]]:
-        """
-        Retrieve documents from knowledge base.
-        
-        Args:
-            question: User question
-            dataset_id: Dataset ID
-            
-        Returns:
-            List of retrieved documents
-        """
-        try:
-            response = self.document_service.retrieve_documents(
-                question=question,
-                dataset_ids=[dataset_id]
-            )
-            
-            if response.get("code") != 0:
-                return []
-                
-            # 从响应中提取文档
-            documents = []
-            if "data" in response and "chunks" in response["data"]:
-                for i, chunk in enumerate(response["data"]["chunks"]):
-                    # 使用document_keyword作为title
-                    title = chunk.get("document_keyword", None)
-                    
-                    doc = {
-                        "id": i+1,
-                        "content": chunk.get("content", ""),
-                        "content_with_weight": f"{chunk.get('content', '')} (相关度: {chunk.get('score', 0):.2f})",
-                        "source": "knowledge",
-                        "title": title,
-                        "weight": chunk.get("score", 1.0)
-                    }
-                    documents.append(doc)
-            
-            return documents
-        except Exception as e:
-            print(f"Error retrieving from knowledge base: {str(e)}")
-            return []
     
     def retrieve_from_web(self, question: str) -> List[Dict[str, Any]]:
         """
@@ -374,4 +329,4 @@ class ChatService:
                 "content": str(e)
             }
             json_error_message = json.dumps(error_message)
-            yield f"event: error\ndata: {json_error_message}\n\n" 
+            yield f"event: error\ndata: {json_error_message}\n\n"

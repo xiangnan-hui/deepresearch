@@ -193,6 +193,50 @@ export function researchEvents(researchId: string, after = '0-0') {
   })
 }
 
+// Fetch streaming retains the auth interceptor, unlike browser EventSource.
+export function openResearchEvents(researchId: string, after = '0-0') {
+  let closed = false
+  let cursor = after
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const controller = new AbortController()
+  const source = {
+    onmessage: null as null | ((event: { data: string; lastEventId: string }) => void),
+    onerror: null as null | (() => void),
+    close() { closed = true; controller.abort(); if (timer) clearTimeout(timer) },
+  }
+  async function connect() {
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+    try {
+      const res = await request.get<ReadableStream<Uint8Array>>(researchEventsUrl(researchId, cursor), {
+        headers: { Accept: 'text/event-stream' }, responseType: 'stream', adapter: 'fetch',
+        loading: false, cancelRepeat: false, signal: controller.signal, timeout: 0,
+      })
+      reader = res.data.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      while (!closed) {
+        const { value, done } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const frames = buffer.split(/\r?\n\r?\n/)
+        buffer = frames.pop() || ''
+        for (const frame of frames) {
+          const lines = frame.split(/\r?\n/)
+          const id = lines.find(line => line.startsWith('id:'))?.slice(3).trim()
+          if (id) cursor = id
+          const data = lines.filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n')
+          if (data) source.onmessage?.({ data, lastEventId: cursor })
+          if (data === '[DONE]') source.close()
+        }
+      }
+    } catch { if (!closed) source.onerror?.() }
+    finally { reader?.releaseLock() }
+    if (!closed) timer = setTimeout(connect, 2000)
+  }
+  void connect()
+  return source
+}
+
 // ============ 附件 API ============
 
 export interface Attachment {

@@ -24,7 +24,7 @@ const state = proxyWithPersist({
   initialState: {
     chatting: false,
     // 搜索模式: 'web' = 深度搜索(网络), 'local' = 本地知识库
-    searchModes: [] as SearchMode[],
+    searchModes: ['web', 'local'] as SearchMode[],
   },
 })
 

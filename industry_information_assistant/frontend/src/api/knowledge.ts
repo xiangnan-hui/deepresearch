@@ -17,7 +17,7 @@ export interface KBDocument {
   filename: string
   file_type?: string
   file_size?: number
-  status: 'pending' | 'processing' | 'completed' | 'failed'
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'review_required'
   chunk_count: number
   error_message?: string
   created_at: string
@@ -43,6 +43,18 @@ export interface UpdateKnowledgeBaseParams {
  */
 export function getKnowledgeBases() {
   return request.get<KnowledgeBase[]>('/knowledge-bases', { loading: false })
+}
+
+export function bootstrapAIKnowledge() {
+  return request.post<{ completed: number; documents: { status: string }[] }>('/knowledge-bases/bootstrap-ai', {}, { timeout: 300000 })
+}
+
+export function retryAIKnowledge() {
+  return request.post<{ documents: { status: string }[] }>('/knowledge-bases/retry-ai', {}, { timeout: 300000 })
+}
+
+export function downloadKnowledgeDocument(kbId: string, docId: string) {
+  return request.get<Blob>(`/knowledge-bases/${kbId}/documents/${docId}/download`, { responseType: 'blob', loading: false })
 }
 
 /**

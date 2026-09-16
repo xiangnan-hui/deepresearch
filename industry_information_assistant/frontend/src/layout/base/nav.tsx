@@ -1,5 +1,4 @@
  
-import IconBid from '@/assets/layout/bid.svg'
 import IconHistory from '@/assets/layout/history.svg'
 import IconHome from '@/assets/layout/home.svg'
 import IconKnowledge from '@/assets/layout/knowledge.svg'
@@ -7,17 +6,18 @@ import IconMemory from '@/assets/layout/memory.svg'
 import IconDatabase from '@/assets/layout/database.svg'
 import IconNewChat from '@/assets/layout/newchat.svg'
 import IconNews from '@/assets/layout/news.svg'
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useSnapshot } from 'valtio'
 import { Dropdown, message } from 'antd'
 import { DownOutlined } from '@ant-design/icons'
 import { NavItem } from './nav-item'
 import { SessionDrawer } from '@/components/session-drawer'
-import { industryState, setCurrentIndustry } from '@/store/industry'
+import { industryState, setCurrentIndustry, loadIndustryConfig } from '@/store/industry'
 import './nav.scss'
 
 export function Nav() {
+  useEffect(() => { void loadIndustryConfig() }, [])
   const { pathname } = useLocation()
   const [sessionDrawerOpen, setSessionDrawerOpen] = useState(false)
   const { currentIndustryId, industries } = useSnapshot(industryState)
@@ -54,7 +54,7 @@ export function Nav() {
       },
       {
         key: 'newchat',
-        label: '新的聊天',
+        label: 'AI 研究',
         icon: IconNewChat,
         href: '/chat',
       },
@@ -80,21 +80,15 @@ export function Nav() {
       },
       {
         key: 'database',
-        label: '数据库',
+        label: '数据分析',
         icon: IconDatabase,
         href: '/database',
       },
       {
         key: 'news',
-        label: '行业资讯',
+        label: 'AI 资讯',
         icon: IconNews,
         href: '/news',
-      },
-      {
-        key: 'bid',
-        label: '招投标信息',
-        icon: IconBid,
-        href: '/bidding',
       },
       // 暂时隐藏职业规划
       // {
@@ -127,7 +121,7 @@ export function Nav() {
                 padding: 4,
               }}
             >
-              {React.cloneElement(menu as React.ReactElement, {
+              {React.cloneElement(menu as React.ReactElement<{ style?: React.CSSProperties }>, {
                 style: {
                   backgroundColor: '#fff',
                   boxShadow: 'none',

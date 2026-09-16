@@ -31,7 +31,6 @@ class ServiceConfig:
             # Milvus
             'milvus_host': settings.milvus_host,
             'milvus_port': settings.milvus_port,
-            'policy_collection': settings.policy_collection,
             # DeepResearch（V1 流程）API keys
             'bochaai_api_key': settings.bocha_api_key,
             'dashscope_api_key': settings.dashscope_api_key,

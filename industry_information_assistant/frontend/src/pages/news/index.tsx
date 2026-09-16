@@ -97,7 +97,7 @@ export default function NewsPage() {
     try {
       const res = await api.news.triggerCollection({
         max_news: 50,
-        max_bidding: 50,
+        max_bidding: 0,
         industry_id: currentIndustryId,
       })
 
@@ -166,7 +166,7 @@ export default function NewsPage() {
       <div className={styles.header}>
         <div className={styles['header-left']}>
           <FileTextOutlined style={{ fontSize: 24, marginRight: 12 }} />
-          <h2>行业资讯</h2>
+          <h2>AI 资讯</h2>
           <Tag color="purple" style={{ marginLeft: 12 }}>{currentIndustry.name}</Tag>
         </div>
         <div className={styles['header-right']}>

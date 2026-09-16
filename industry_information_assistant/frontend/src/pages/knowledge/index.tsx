@@ -37,6 +37,7 @@ import 'dayjs/locale/zh-cn'
 import UploadModal, { UploadResult } from '@/components/upload-modal'
 import ChunksDrawer from '@/components/chunks-drawer'
 import styles from './index.module.scss'
+import { bootstrapAIKnowledge, retryAIKnowledge, downloadKnowledgeDocument } from '@/api/knowledge'
 
 dayjs.extend(relativeTime)
 dayjs.locale('zh-cn')
@@ -44,6 +45,7 @@ dayjs.locale('zh-cn')
 const { Text, Paragraph } = Typography
 
 const STATUS_MAP: Record<string, { color: string; text: string }> = {
+  review_required: { color: 'warning', text: '已归档 · 待核验' },
   pending: { color: 'default', text: '待处理' },
   processing: { color: 'processing', text: '处理中' },
   completed: { color: 'success', text: '已完成' },
@@ -55,6 +57,7 @@ export default function KnowledgePage() {
   const { knowledgeBases, currentKnowledgeBase, loading, uploading } = useSnapshot(knowledgeState)
   const { isLoggedIn } = useSnapshot(authState)
   const [createModalOpen, setCreateModalOpen] = useState(false)
+  const [initializingAI, setInitializingAI] = useState(false)
   const [editModalOpen, setEditModalOpen] = useState(false)
   const [editingKb, setEditingKb] = useState<KnowledgeBase | null>(null)
   const [form] = Form.useForm()
@@ -232,6 +235,28 @@ export default function KnowledgePage() {
     <div className={styles['kb-list']}>
       <div className={styles['header']}>
         <h2>我的知识库</h2>
+        <Button loading={initializingAI} onClick={async () => {
+          setInitializingAI(true)
+          try {
+            const res = await bootstrapAIKnowledge()
+            const result = res.data
+            if (result.completed === result.documents.length) message.success(`已导入 ${result.completed} 份 AI 基础资料`)
+            else message.warning('资料已归档，部分入库失败；检查向量服务后可重试')
+            await knowledgeActions.fetchKnowledgeBases()
+          } catch { message.error('初始化未完成，请检查服务后重试') }
+          finally { setInitializingAI(false) }
+        }}>导入 AI 基础资料</Button>
+        <Button disabled={initializingAI} onClick={async () => {
+          setInitializingAI(true)
+          try {
+            const res = await retryAIKnowledge()
+            const failed = res.data.documents.filter(d => d.status !== 'completed').length
+            if (failed) message.warning(`仍有 ${failed} 份资料未完成入库，请检查服务配置`)
+            else message.success('重试完成')
+            await knowledgeActions.fetchKnowledgeBases()
+          } catch { message.error('重试失败，请检查服务连接') }
+          finally { setInitializingAI(false) }
+        }}>重试未完成入库</Button>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateModalOpen(true)}>
           创建知识库
         </Button>
@@ -366,6 +391,15 @@ export default function KnowledgePage() {
                 <List.Item
                   className={styles['doc-item']}
                   actions={[
+                    <Button key="download" type="text" size="small" onClick={async () => {
+                      try {
+                        const res = await downloadKnowledgeDocument(currentKnowledgeBase.id, doc.id)
+                        const url = URL.createObjectURL(res.data)
+                        const link = document.createElement('a')
+                        link.href = url; link.download = doc.filename; link.click()
+                        setTimeout(() => URL.revokeObjectURL(url), 1000)
+                      } catch { message.error('原文件下载失败') }
+                    }}>下载原文</Button>,
                     <Button
                       key="view"
                       type="text"

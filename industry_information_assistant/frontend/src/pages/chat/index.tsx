@@ -106,8 +106,7 @@ export default function Index() {
     if (!researchId) return
 
     const after = localStorage.getItem(`research-event:${researchId}`) || '0-0'
-    const baseUrl = String(import.meta.env.VITE_API_BASE || '').replace(/\/$/, '')
-    const source = new EventSource(`${baseUrl}${api.session.researchEventsUrl(researchId, after)}`)
+    const source = api.session.openResearchEvents(researchId, after)
     source.onmessage = event => {
       if (event.lastEventId) localStorage.setItem(`research-event:${researchId}`, event.lastEventId)
       if (event.data === '[DONE]') {
@@ -123,6 +122,12 @@ export default function Index() {
         if (researchEvent.type === 'phase') {
           target.loading = true
           target.think = `研究正在进行：${researchEvent.phase}`
+        }
+        if (researchEvent.type === 'rag_sync') {
+          const sync = researchEvent.content
+          if (sync?.status === 'completed') message.success('报告已同步至 AI 研究知识库')
+          else if (sync?.status === 'review_required') message.warning('报告已归档，质检未通过，暂不参与 RAG 检索')
+          else if (sync?.status === 'failed') message.warning('报告入库未完成，可在知识库页面重试')
         }
         if (researchEvent.type === 'research_complete') {
           target.content = researchEvent.final_report || target.content
@@ -674,6 +679,12 @@ export default function Index() {
             }
 
             // V2 研究完成事件
+          if (json.type === 'rag_sync') {
+              const sync = json.content
+              if (sync?.status === 'completed') message.success('报告已同步至 AI 研究知识库')
+              else if (sync?.status === 'review_required') message.warning('报告已归档，质检未通过，暂不参与 RAG 检索')
+              else if (sync?.status === 'failed') message.warning('报告入库未完成，可在知识库页面重试')
+          }
           if (json.type === 'research_complete') {
               console.log('研究完成事件:', json)
               // 设置最终报告为内容

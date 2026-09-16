@@ -80,6 +80,7 @@ class Settings:
     """全项目统一配置对象（单例，import 时完成读取）"""
 
     def __init__(self):
+        self.ai_knowledge_dir = _get_str("AI_KNOWLEDGE_DIR", default="")
         # ==================== LLM - DashScope（Embedding / Rerank / 记忆 / V1 流程） ====================
         # 阿里云百炼 API（必填），用于 text-embedding-v4、Rerank、长期记忆等
         self.dashscope_api_key: str = _get_str("DASHSCOPE_API_KEY")
@@ -160,7 +161,6 @@ class Settings:
         # Milvus
         self.milvus_host: str = _get_str("MILVUS_HOST", default="localhost")
         self.milvus_port: int = _get_int("MILVUS_PORT", default=19530)
-        self.policy_collection: str = _get_str("POLICY_COLLECTION", default="policy_documents")
 
         # ==================== RAGFlow 文档 API ====================
         self.ragflow_base_url: str = _get_str("API_BASE_URL", default="http://localhost:9380")

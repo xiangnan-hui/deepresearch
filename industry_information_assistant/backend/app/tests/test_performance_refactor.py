@@ -5,18 +5,18 @@ from types import SimpleNamespace
 
 from harness.model_gateway import ModelGateway, get_model_metrics, reset_model_context, set_model_context
 
-from service.deep_research_v2.chart_builder import ChartBuilder, build_knowledge_graph
-from service.deep_research_v2.evidence import EvidenceAdapter
-from service.deep_research_v2.quality_gate import DeterministicQualityGate
-from service.deep_research_v2.state import ResearchPhase, create_initial_state
-from service.deep_research_v2.agents.data_analyst import DataAnalyst
-from service.deep_research_v2.agents.architect import ChiefArchitect
-from service.deep_research_v2.agents.critic import CriticMaster
-from service.deep_research_v2.agents.scout import DeepScout
-from service.deep_research_v2.agents import scout as scout_module
-from service.deep_research_v2.agents.writer import LeadWriter
-from service.deep_research_v2.agents.wizard import CodeWizard
-from service.deep_research_v2.graph import DeepResearchGraph
+from service.deep_research.chart_builder import ChartBuilder, build_knowledge_graph
+from service.deep_research.evidence import EvidenceAdapter
+from service.deep_research.quality_gate import DeterministicQualityGate
+from service.deep_research.state import ResearchPhase, create_initial_state
+from service.deep_research.agents.data_analyst import DataAnalyst
+from service.deep_research.agents.architect import ChiefArchitect
+from service.deep_research.agents.critic import CriticMaster
+from service.deep_research.agents.scout import DeepScout
+from service.deep_research.agents import scout as scout_module
+from service.deep_research.agents.writer import LeadWriter
+from service.deep_research.agents.wizard import CodeWizard
+from service.deep_research.graph import DeepResearchGraph
 
 
 def state_with_evidence():
@@ -32,7 +32,7 @@ def state_with_evidence():
 
 
 class PerformanceRefactorTests(unittest.TestCase):
-    def test_common_end_to_end_path_uses_six_model_calls(self):
+    def test_common_path_includes_editorial_pass(self):
         async def run():
             scout_module.MILVUS_AVAILABLE = False
             graph = DeepResearchGraph(
@@ -74,8 +74,8 @@ class PerformanceRefactorTests(unittest.TestCase):
             return calls, state
 
         calls, state = asyncio.run(run())
-        self.assertEqual(len(calls), 6)
-        self.assertEqual([name for name, _ in calls].count("LeadWriter"), 3)
+        self.assertEqual(len(calls), 7)
+        self.assertEqual([name for name, _ in calls].count("LeadWriter"), 4)
         self.assertEqual(state["phase"], ResearchPhase.COMPLETED.value)
 
     def test_model_gateway_records_usage_and_cache_hits(self):
@@ -190,7 +190,7 @@ class PerformanceRefactorTests(unittest.TestCase):
         self.assertEqual(len(result["extracted_facts"]), 1)
         self.assertEqual(result["extracted_facts"][0]["related_sections"], ["sec_1"])
 
-    def test_writer_executes_one_focused_call_per_section(self):
+    def test_writer_edits_whole_report_after_sections(self):
         async def run():
             state = state_with_evidence()
             state["phase"] = ResearchPhase.WRITING.value
@@ -208,7 +208,8 @@ class PerformanceRefactorTests(unittest.TestCase):
             return calls, state, events
 
         calls, state, events = asyncio.run(run())
-        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[1]["operation_name"], "polish_report")
         self.assertTrue(calls[0]["json_mode"])
         self.assertEqual(calls[0]["operation_name"], "write_section")
         self.assertIn("趋势", state["draft_sections"]["sec_1"])
@@ -229,7 +230,7 @@ class PerformanceRefactorTests(unittest.TestCase):
         self.assertFalse(result["passed"])
         self.assertIn(result["verdict"], {"REVISE", "RESEARCH"})
 
-    def test_critic_semantic_review_is_capped_at_one_call(self):
+    def test_critic_rechecks_after_revision(self):
         async def run():
             state = create_initial_state("AI 趋势", "session-test")
             state["phase"] = ResearchPhase.REVIEWING.value
@@ -254,7 +255,7 @@ class PerformanceRefactorTests(unittest.TestCase):
             await agent.process(state)
             return calls
 
-        self.assertEqual(len(asyncio.run(run())), 1)
+        self.assertEqual(len(asyncio.run(run())), 2)
 
 
 if __name__ == "__main__":

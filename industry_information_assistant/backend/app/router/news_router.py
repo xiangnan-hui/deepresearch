@@ -72,24 +72,7 @@ async def get_bidding_list(
     """
     获取招投标信息列表
     """
-    logger.info(f"[news_router] get_bidding_list 请求: notice_type={notice_type}, province={province}, industry_id={industry_id}, limit={limit}, offset={offset}")
-    service = get_news_collection_service(db)
-    items, filtered_total = service.get_bidding_list(
-        notice_type=notice_type,
-        province=province,
-        industry_id=industry_id,
-        limit=limit,
-        offset=offset
-    )
-    stats = service.get_bidding_stats(industry_id=industry_id)
-    logger.info(f"[news_router] get_bidding_list 返回: items数量={len(items)}, filtered_total={filtered_total}")
-
-    return NewsListResponse(
-        success=True,
-        data=items,
-        total=filtered_total,
-        stats=stats
-    )
+    raise HTTPException(status_code=410, detail="招投标功能已停用")
 
 
 @router.get("/stats")
@@ -99,7 +82,7 @@ async def get_all_stats(db: Session = Depends(get_db)):
     """
     service = get_news_collection_service(db)
     news_stats = service.get_news_stats()
-    bidding_stats = service.get_bidding_stats()
+    bidding_stats = {"total": 0, "by_type": {}, "by_province": {}}
 
     return {
         "success": True,
@@ -112,7 +95,7 @@ async def get_all_stats(db: Session = Depends(get_db)):
 async def trigger_collection(
     background_tasks: BackgroundTasks,
     max_news: int = Query(50, ge=1, le=200),
-    max_bidding: int = Query(50, ge=1, le=200),
+    max_bidding: int = Query(0, ge=0, le=200),
     industry_id: Optional[str] = Query(None, description="行业ID"),
     db: Session = Depends(get_db)
 ):
@@ -183,7 +166,7 @@ async def check_data_status(db: Session = Depends(get_db)):
     service = get_news_collection_service(db)
     has_data = service.has_data()
     news_stats = service.get_news_stats()
-    bidding_stats = service.get_bidding_stats()
+    bidding_stats = {"total": 0, "by_type": {}, "by_province": {}}
 
     return {
         "success": True,

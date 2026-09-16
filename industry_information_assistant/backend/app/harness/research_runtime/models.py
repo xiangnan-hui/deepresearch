@@ -49,6 +49,11 @@ class InteractiveResearchState:
     session_id: str
     query: str
     status: str = ResearchStatus.QUEUED.value
+    user_id: Optional[str] = None
+    kb_name: Optional[str] = None
+    search_web: bool = True
+    search_local: bool = False
+    rag_sync: Dict[str, Any] = field(default_factory=dict)
     current_stage: str = "queued"
     current_step: str = ""
     progress: int = 0
@@ -65,6 +70,7 @@ class InteractiveResearchState:
     search_count: int = 0
     search_cache_hits: int = 0
     error: Optional[str] = None
+    command_receipts: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     created_at: str = field(default_factory=utc_now)
     updated_at: str = field(default_factory=utc_now)
 

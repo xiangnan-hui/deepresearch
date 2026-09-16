@@ -1,4 +1,5 @@
 """Fast Agent 到 Slow Worker 的命令队列。"""
+#Fast 把命令写入 Redis Stream，Slow 按游标读取命令。它本身不执行暂停、取消等动作
 
 import asyncio
 import json

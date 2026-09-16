@@ -107,7 +107,6 @@ export default function CollectionModal({
               subTitle={
                 <div className={styles.stats}>
                   <p>行业资讯：<strong>{result.news_collected}</strong> 条</p>
-                  <p>招投标信息：<strong>{result.bidding_collected}</strong> 条</p>
                   {result.errors.length > 0 && (
                     <div className={styles.errors}>
                       <p>错误信息：</p>

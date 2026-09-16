@@ -85,6 +85,7 @@ class MilvusService:
         self,
         collection_name: str,
         documents: List[Dict[str, Any]],
+        upsert: bool = False,
     ) -> int:
         """
         插入文档
@@ -116,7 +117,10 @@ class MilvusService:
 
         # 插入数据
         data = [ids, doc_ids, kb_ids, filenames, contents, chunk_indices, vectors]
-        collection.insert(data)
+        if upsert:
+            collection.upsert(data)
+        else:
+            collection.insert(data)
         collection.flush()
 
         print(f"成功插入 {len(documents)} 条文档到 {collection_name}")
@@ -286,6 +290,18 @@ class MilvusService:
         except Exception as e:
             print(f"查询切片失败: {e}")
             return []
+
+
+    def get_chunks_by_doc_id(self, collection_name: str, doc_id: str, limit: int = 1000):
+        import uuid
+        doc_id = str(uuid.UUID(str(doc_id)))
+        if not utility.has_collection(collection_name):
+            return []
+        collection = Collection(collection_name)
+        collection.load()
+        rows = collection.query(expr=f'doc_id == "{doc_id}"',
+                                output_fields=["id", "doc_id", "content", "chunk_index"], limit=limit)
+        return sorted(rows, key=lambda row: row.get("chunk_index", 0))
 
 
 # 单例实例

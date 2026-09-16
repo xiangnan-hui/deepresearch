@@ -9,7 +9,7 @@ import styles from './index.module.scss'
 
 // 行业卡片颜色配置
 const INDUSTRY_COLORS: Record<string, { color: string; bgColor: string }> = {
-  smart_transportation: { color: '#055588', bgColor: '#E7F4FF' },
+  artificial_intelligence: { color: '#055588', bgColor: '#E7F4FF' },
   finance: { color: '#1144BA', bgColor: '#EFF3FF' },
   healthcare: { color: '#335519', bgColor: '#EDF7E6' },
   energy: { color: '#B85C00', bgColor: '#FFF4E6' },
@@ -54,9 +54,9 @@ export default function Index() {
     <div className={styles['index-page']}>
       <div className={styles.header}>
         <img className={styles.bg} src={IconBg} />
-        <div className={styles.title}>Hi～欢迎来到行业咨询助手</div>
+        <div className={styles.title}>欢迎使用 AI 情报与研究助手</div>
         <div className={styles.desc}>
-          大模型驱动的行业资讯助手，为不同类型用户提供更便捷的AI应用开发平台
+          关注人工智能进展，结合个人知识库生成有据可查的研究报告
         </div>
       </div>
 

@@ -1,7 +1,7 @@
 
 """
 定时任务调度服务
-- 每天12点自动采集行业资讯和招投标信息
+- 每天12点自动采集AI 资讯
 """
 import asyncio
 import logging
@@ -61,7 +61,7 @@ class SchedulerService:
         db = SessionLocal()
         try:
             service = NewsCollectionService(db)
-            result = await service.collect_all(max_news=20, max_bidding=20)
+            result = await service.collect_all(max_news=20, max_bidding=0)
 
             logger.info(f"每日资讯采集完成: {result}")
         except Exception as e:
@@ -75,7 +75,7 @@ class SchedulerService:
 
         try:
             service = NewsCollectionService(db)
-            result = await service.collect_all(max_news=20, max_bidding=20)
+            result = await service.collect_all(max_news=20, max_bidding=0)
             logger.info(f"手动采集完成: {result}")
             return result
         except Exception as e:

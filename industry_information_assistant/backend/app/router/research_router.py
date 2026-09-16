@@ -9,9 +9,11 @@ from starlette.status import HTTP_200_OK, HTTP_400_BAD_REQUEST, HTTP_500_INTERNA
 import logging
 
 from core.redis_client import cache
+from router.auth_router import get_current_user_required
+from models.user import User
 
-# V2 导入
-from service.deep_research_v2.service import DeepResearchV2Service
+# Deep Research 服务
+from service.deep_research.service import DeepResearchService
 from harness.research_runtime import CommandType, get_research_runtime
 
 logging.basicConfig(level=logging.INFO)
@@ -37,7 +39,7 @@ class ResearchRequest(BaseModel):
     class Config:
         json_schema_extra = {
             "example": {
-                "query": "中国安责险的市场现状和未来发展趋势是什么？请提供具体数据支持。",
+                "query": "RAG 与微调分别适合什么场景？请比较证据、成本和实现限制。",
                 "session_id": None,
                 "max_iterations": 3,
                 "kb_name": None,
@@ -65,11 +67,12 @@ class ResearchCommandRequest(BaseModel):
 
 
 @router.post("/start", status_code=202)
-async def start_research(request: ResearchRequest):
+async def start_research(request: ResearchRequest, current_user: User = Depends(get_current_user_required)):
     """创建后台研究任务并立即返回，不占用长连接执行 Graph。"""
     session_id = request.session_id or str(uuid.uuid4())
     state = await get_research_runtime().start(
         query=request.query,
+        user_id=str(current_user.id),
         session_id=session_id,
         kb_name=request.kb_name,
         search_web=request.get_search_web(),
@@ -79,18 +82,19 @@ async def start_research(request: ResearchRequest):
 
 
 @router.get("/{research_id}/state")
-async def get_research_state(research_id: str):
+async def get_research_state(research_id: str, current_user: User = Depends(get_current_user_required)):
     state = await get_research_runtime().states.get(research_id)
-    if not state:
+    if not state or state.get("user_id") != str(current_user.id):
         raise HTTPException(status_code=404, detail="Research task not found")
     return state
 
 
 @router.get("/{research_id}/events")
-async def stream_research_events(research_id: str, after: str = Query("0-0")):
+async def stream_research_events(research_id: str, after: str = Query("0-0"), current_user: User = Depends(get_current_user_required)):
     """订阅独立 Redis Stream；客户端断开不会终止后台研究。"""
     runtime = get_research_runtime()
-    if not await runtime.states.get(research_id):
+    state = await runtime.states.get(research_id)
+    if not state or state.get("user_id") != str(current_user.id):
         raise HTTPException(status_code=404, detail="Research task not found")
 
     async def generate():
@@ -111,10 +115,10 @@ async def stream_research_events(research_id: str, after: str = Query("0-0")):
 
 
 @router.post("/{research_id}/commands", status_code=202)
-async def send_research_command(research_id: str, request: ResearchCommandRequest):
+async def send_research_command(research_id: str, request: ResearchCommandRequest, current_user: User = Depends(get_current_user_required)):
     runtime = get_research_runtime()
     state = await runtime.states.get(research_id)
-    if not state:
+    if not state or state.get("user_id") != str(current_user.id):
         raise HTTPException(status_code=404, detail="Research task not found")
     if state.get("status") in {"completed", "cancelled", "failed"}:
         raise HTTPException(status_code=409, detail="Research task is already terminal")
@@ -123,11 +127,11 @@ async def send_research_command(research_id: str, request: ResearchCommandReques
 
 
 @router.post("/{research_id}/resume", status_code=202)
-async def resume_interactive_research(research_id: str):
+async def resume_interactive_research(research_id: str, current_user: User = Depends(get_current_user_required)):
     """恢复暂停任务，或在进程重启后从最近业务 checkpoint 重新提交。"""
     runtime = get_research_runtime()
     state = await runtime.states.get(research_id)
-    if not state:
+    if not state or state.get("user_id") != str(current_user.id):
         raise HTTPException(status_code=404, detail="Research task not found")
     if state.get("status") == "completed":
         raise HTTPException(status_code=409, detail="Research task is already completed")
@@ -138,17 +142,22 @@ async def resume_interactive_research(research_id: str):
         research_id=research_id,
         query=state["query"],
         session_id=state["session_id"],
+        user_id=str(current_user.id),
+        kb_name=state.get("kb_name"),
+        search_web=state.get("search_web", True),
+        search_local=state.get("search_local", False),
         resume=True,
     )
     return {"research_id": research_id, "status": resumed.get("status", "queued")}
 
-def get_research_service_v2():
+def get_research_service():
     """获取唯一的 LangGraph 研究服务。"""
-    return DeepResearchV2Service()
+    return DeepResearchService()
 
 @router.post("/stream", status_code=HTTP_200_OK)
 async def stream_research(
     request: ResearchRequest,
+    current_user: User = Depends(get_current_user_required),
 ):
     """
     深度研究接口 - 流式输出
@@ -164,11 +173,12 @@ async def stream_research(
     Returns:
         流式响应，包含研究过程和结果的 SSE 格式数据
     """
-    service = get_research_service_v2()
+    service = get_research_service()
     async def generate_sse():
         try:
             async for event in service.research(
                 query=request.query,
+                user_id=str(current_user.id),
                 session_id=request.session_id,
                 kb_name=request.kb_name,
                 search_web=request.get_search_web(),
@@ -185,11 +195,12 @@ async def stream_research(
 
 @router.get("/stream", status_code=HTTP_200_OK)
 async def stream_research_get(
-    query: str = Query(..., description="研究问题", example="中国安责险的市场现状和未来发展趋势是什么？"),
+    query: str = Query(..., description="研究问题", example="AI 智能体的关键技术与应用限制是什么？"),
     max_iterations: int = Query(3, description="最大迭代次数", ge=1, le=5),
     kb_name: Optional[str] = Query(None, description="本地知识库名称"),
     search_web: bool = Query(True, description="是否搜索网络"),
     search_local: bool = Query(True, description="是否搜索本地知识库"),
+    current_user: User = Depends(get_current_user_required),
 ):
     """
     深度研究接口 - GET方式流式输出
@@ -205,11 +216,12 @@ async def stream_research_get(
     Returns:
         流式响应，包含研究过程和结果的 SSE 格式数据
     """
-    service = get_research_service_v2()
+    service = get_research_service()
     async def generate_sse():
         try:
             async for event in service.research(
                 query=query,
+                user_id=str(current_user.id),
                 kb_name=kb_name,
                 search_web=search_web,
                 search_local=search_local
@@ -231,8 +243,8 @@ async def test_wizard_endpoint():
 
     使用模拟数据直接测试图表生成功能。
     """
-    from service.deep_research_v2.agents.wizard import CodeWizard
-    from service.deep_research_v2.state import ResearchState, ResearchPhase, create_initial_state
+    from service.deep_research.agents.wizard import CodeWizard
+    from service.deep_research.state import ResearchState, ResearchPhase, create_initial_state
     from config.llm_config import get_config
 
     # 使用配置创建 CodeWizard 实例
@@ -460,7 +472,7 @@ async def delete_checkpoint(session_id: str):
 
 
 @router.post("/resume/{session_id}", status_code=HTTP_200_OK)
-async def resume_research(session_id: str):
+async def resume_research(session_id: str, current_user: User = Depends(get_current_user_required)):
     """
     恢复研究任务（从检查点）
 
@@ -475,7 +487,7 @@ async def resume_research(session_id: str):
         checkpoint_service = get_checkpoint_service()
         info = checkpoint_service.get_checkpoint_info(session_id)
 
-        if not info:
+        if not info or str(info.get("user_id")) != str(current_user.id):
             raise HTTPException(
                 status_code=HTTP_400_BAD_REQUEST,
                 detail="No checkpoint found for this session"
@@ -487,14 +499,15 @@ async def resume_research(session_id: str):
                 detail="Research already completed"
             )
 
-        # 使用 V2 服务恢复
-        service_v2 = get_research_service_v2()
+        # 使用 Deep Research 服务恢复
+        service = get_research_service()
 
         async def generate_sse():
             try:
-                async for event in service_v2.research(
+                async for event in service.research(
                     query=info.get("query", ""),
                     session_id=session_id,
+                    user_id=str(current_user.id),
                     resume=True
                 ):
                     yield event

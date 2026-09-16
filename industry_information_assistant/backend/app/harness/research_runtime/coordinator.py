@@ -60,6 +60,10 @@ class ResearchRuntime:
                 research_id=research_id,
                 session_id=session_id,
                 query=query,
+                user_id=user_id,
+                kb_name=kb_name,
+                search_web=search_web,
+                search_local=search_local,
             )
             await self.states.create(state)
             await self.events.publish(research_id, "queued", {"query": query, "session_id": session_id})
@@ -94,14 +98,14 @@ class ResearchRuntime:
             await self.states.set_status(research_id, ResearchStatus.RUNNING.value, current_stage="starting")
             await self.events.publish(research_id, "started", {})
 
-            # 延迟导入，避免 Runtime 与 DeepResearchV2Service 初始化时循环依赖。
+            # 延迟导入，避免 Runtime 与 DeepResearchService 初始化时循环依赖。
             try:
-                from service.deep_research_v2.service import DeepResearchV2Service
+                from service.deep_research.service import DeepResearchService
             except ImportError:
-                from app.service.deep_research_v2.service import DeepResearchV2Service
+                from app.service.deep_research.service import DeepResearchService
 
             while True:
-                service = DeepResearchV2Service()
+                service = DeepResearchService()
                 runtime_state = await self.states.get(research_id) or {}
                 replan_requested = False
                 async for event in service.harness.run(
@@ -109,6 +113,7 @@ class ResearchRuntime:
                     options["session_id"],
                     resume=options.get("resume", False) and not runtime_state.get("user_constraints"),
                     user_id=options.get("user_id"),
+                    kb_name=options.get("kb_name"),
                     search_web=options.get("search_web", True),
                     search_local=options.get("search_local", False),
                     research_id=research_id,
@@ -205,6 +210,10 @@ class ResearchRuntime:
             await self.states.update(research_id, recent_search_results=recent[-50:])
         elif event_type == "research_complete":
             await self.states.update(research_id, progress=100, current_stage="completed")
+        elif event_type == "rag_sync":
+            await self.states.update(research_id, rag_sync=event.get("content", {}))
+        elif event_type == "error":
+            await self.states.set_status(research_id, ResearchStatus.FAILED.value, error=str(event.get("content", "研究失败")))
         elif event_type == "search_metrics" and isinstance(event.get("content"), dict):
             await self.states.update(
                 research_id,
@@ -238,9 +247,19 @@ class ResearchRuntime:
     async def _safe_point(self, research_id: str, cursor: str) -> tuple[str, Optional[str]]:
         for stream_id, command in await self.commands.read(research_id, cursor):
             cursor = stream_id
+            current_state = await self.states.get(research_id) or {}
+            receipts = dict(current_state.get("command_receipts", {}))
+            command_id = str(command.get("command_id") or stream_id)
+            if command_id in receipts and receipts[command_id].get("status") == "applied":
+                continue
+            receipts[command_id] = {"status": "accepted", "stream_id": stream_id}
+            await self.states.update(research_id, command_receipts=receipts, command_cursor=cursor)
+            await self.events.publish(research_id, "command_accepted", {"command_id": command_id})
             command_type = command.get("type")
             payload = command.get("payload") or {}
             if command_type == CommandType.CANCEL.value:
+                receipts[command_id]["status"] = "applied"
+                await self.states.update(research_id, command_receipts=receipts)
                 await self.states.set_status(research_id, ResearchStatus.CANCELLED.value)
                 await self.events.publish(research_id, "cancelled", {"command_id": command.get("command_id")})
                 return cursor, "cancel"
@@ -285,6 +304,8 @@ class ResearchRuntime:
                     ],
                 )
                 await self.events.publish(research_id, "plan_update_requested", command)
+                receipts[command_id]["status"] = "applied"
+                await self.states.update(research_id, command_receipts=receipts)
                 return cursor, "replan"
             elif command_type in {CommandType.ADD_QUESTION.value, CommandType.PRIORITIZE_GAP.value}:
                 current = await self.states.get(research_id) or {}
@@ -294,6 +315,9 @@ class ResearchRuntime:
                     gaps.append(str(value))
                 await self.states.update(research_id, remaining_gaps=gaps)
                 await self.events.publish(research_id, "gap_discovered", command)
+            receipts[command_id]["status"] = "applied"
+            await self.states.update(research_id, command_receipts=receipts)
+            await self.events.publish(research_id, "command_applied", {"command_id": command_id})
         return cursor, None
 
     async def shutdown(self) -> None:

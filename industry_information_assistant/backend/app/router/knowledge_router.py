@@ -1,10 +1,12 @@
 
 """知识库管理路由"""
+import asyncio
 import os
 import shutil
 from typing import List
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, BackgroundTasks
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from core.database import get_db
@@ -23,7 +25,8 @@ from schemas.knowledge import (
 router = APIRouter(prefix="/knowledge-bases", tags=["知识库管理"])
 
 # 文件上传目录
-UPLOAD_DIR = "/tmp/knowledge_uploads"
+from service.ai_knowledge_service import ROOT, collection_name
+UPLOAD_DIR = str(ROOT / "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # 支持的文件类型
@@ -71,51 +74,43 @@ def doc_to_response(doc: Document) -> DocumentResponse:
 
 
 async def process_document(document_id: str, file_path: str, kb_name: str, db_session_factory):
-    """后台处理文档（使用 DocMind 解析、向量化、存储到ES）"""
-    from service.docmind_service import process_document_with_docmind
+    def process():
+        from pathlib import Path
+        from service.ai_knowledge_service import index_text
+        with db_session_factory() as db:
+            doc = db.query(Document).filter(Document.id == document_id).first()
+            if not doc:
+                return
+            doc.status = "processing"
+            db.commit()
+            try:
+                if Path(file_path).suffix.lower() in {".md", ".txt", ".csv", ".json", ".py", ".js", ".ts", ".yaml", ".yml", ".xml", ".html"}:
+                    text = Path(file_path).read_text(encoding="utf-8-sig")
+                else:
+                    from service.docmind_service import DocMindService
+                    parser = DocMindService()
+                    task_id = parser.submit_job(file_path, doc.filename)
+                    if not task_id or not parser.wait_for_completion(task_id):
+                        raise RuntimeError("文档解析失败或超时")
+                    text = parser.collect_all_results(task_id)
+                doc.chunk_count = index_text(text, doc.knowledge_base_id, doc.id, doc.filename)
+                doc.status, doc.error_message = "completed", None
+            except Exception as exc:
+                doc.status, doc.error_message = "failed", str(exc)
+            db.commit()
+    await asyncio.to_thread(process)
 
-    # 创建新的数据库会话
-    db = db_session_factory()
-    try:
-        # 获取文档记录
-        doc = db.query(Document).filter(Document.id == document_id).first()
-        if not doc:
-            return
 
-        # 更新状态为处理中
-        doc.status = "processing"
-        db.commit()
+@router.post("/bootstrap-ai")
+async def bootstrap_ai(current_user: User = Depends(get_current_user_required)):
+    from service.ai_knowledge_service import bootstrap
+    return await asyncio.to_thread(bootstrap, str(current_user.id))
 
-        try:
-            # 使用知识库名称作为ES索引名
-            index_name = f"kb_{kb_name}".lower().replace(" ", "_")
 
-            # 使用 DocMind 处理文档
-            result = process_document_with_docmind(
-                file_path=file_path,
-                file_name=doc.filename,
-                index_name=index_name,
-            )
-
-            if result["success"]:
-                doc.status = "completed"
-                doc.chunk_count = result["document_count"]
-                doc.error_message = None
-            else:
-                doc.status = "failed"
-                doc.error_message = result["message"]
-
-        except Exception as e:
-            doc.status = "failed"
-            doc.error_message = str(e)
-
-        db.commit()
-
-    finally:
-        db.close()
-        # 清理临时文件
-        if os.path.exists(file_path):
-            os.remove(file_path)
+@router.post("/retry-ai")
+async def retry_ai(current_user: User = Depends(get_current_user_required)):
+    from service.ai_knowledge_service import retry_archives
+    return await asyncio.to_thread(retry_archives, str(current_user.id))
 
 
 @router.get("", response_model=List[KnowledgeBaseResponse])
@@ -279,6 +274,16 @@ async def delete_knowledge_base(
             detail="知识库不存在"
         )
 
+    from service.milvus_service import get_milvus_service
+    if not get_milvus_service().delete_collection(collection_name(kb.id)):
+        raise HTTPException(status_code=503, detail="向量删除失败，请稍后重试")
+    for doc in kb.documents:
+        if doc.file_path and os.path.exists(doc.file_path):
+            from pathlib import Path
+            path = Path(doc.file_path).resolve()
+            if ROOT.resolve() in path.parents:
+                path.unlink()
+                path.with_suffix(".json").unlink(missing_ok=True)
     db.delete(kb)
     db.commit()
     return None
@@ -322,7 +327,9 @@ async def upload_document(
         )
 
     # 保存文件到临时目录
-    file_path = os.path.join(UPLOAD_DIR, f"{kb_uuid}_{file.filename}")
+    from uuid import uuid4
+    safe_filename = os.path.basename(file.filename.replace("\\", "/"))
+    file_path = os.path.join(UPLOAD_DIR, f"{uuid4().hex}{ext}")
     try:
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
@@ -339,7 +346,7 @@ async def upload_document(
     doc = Document(
         knowledge_base_id=kb_uuid,
         user_id=current_user.id,
-        filename=file.filename,
+        filename=safe_filename,
         file_type=ext[1:] if ext else None,  # 去掉点
         file_size=file_size,
         file_path=file_path,
@@ -457,12 +464,13 @@ async def get_document_chunks(
         )
 
     # 从 Milvus 获取切片
-    collection_name = f"kb_{kb.name}".lower().replace(" ", "_")
+    from service.ai_knowledge_service import collection_name as scoped_collection
+    collection_name = scoped_collection(kb.id)
     print(f"[get_document_chunks] 查询切片: collection={collection_name}, filename={doc.filename}")
 
     try:
         milvus = get_milvus_service()
-        chunks = milvus.get_chunks_by_filename(collection_name, doc.filename)
+        chunks = milvus.get_chunks_by_doc_id(collection_name, str(doc.id))
         print(f"[get_document_chunks] 找到 {len(chunks)} 个切片")
     except Exception as e:
         print(f"[get_document_chunks] Milvus 查询失败: {e}")
@@ -481,6 +489,21 @@ async def get_document_chunks(
             for i, chunk in enumerate(chunks)
         ]
     }
+
+
+@router.get("/{kb_id}/documents/{doc_id}/download")
+async def download_document(kb_id: UUID, doc_id: UUID,
+                            current_user: User = Depends(get_current_user_required),
+                            db: Session = Depends(get_db)):
+    from pathlib import Path
+    doc = db.query(Document).filter(Document.id == doc_id, Document.knowledge_base_id == kb_id,
+                                    Document.user_id == current_user.id).first()
+    if not doc or not doc.file_path:
+        raise HTTPException(status_code=404, detail="原文件不存在")
+    path = Path(doc.file_path).resolve()
+    if ROOT.resolve() not in path.parents or not path.is_file():
+        raise HTTPException(status_code=404, detail="原文件不存在，请重新上传")
+    return FileResponse(path, filename=doc.filename, media_type="application/octet-stream")
 
 
 @router.delete("/{kb_id}/documents/{doc_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -524,9 +547,16 @@ async def delete_document(
             detail="文档不存在"
         )
 
+    from service.milvus_service import get_milvus_service
+    if not get_milvus_service().delete_by_doc_id(collection_name(kb.id), str(doc.id)):
+        raise HTTPException(status_code=503, detail="向量删除失败，请稍后重试")
     # 删除文件（如果存在）
     if doc.file_path and os.path.exists(doc.file_path):
         os.remove(doc.file_path)
+        from pathlib import Path
+        path = Path(doc.file_path).resolve()
+        if ROOT.resolve() in path.parents:
+            path.with_suffix(".json").unlink(missing_ok=True)
 
     # 更新知识库文档计数
     kb.document_count = max((kb.document_count or 0) - 1, 0)

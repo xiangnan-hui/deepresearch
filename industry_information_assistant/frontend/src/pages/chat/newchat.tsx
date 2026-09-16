@@ -1,10 +1,9 @@
  
 import * as api from '@/api'
-import type { NewsItem, BiddingItem } from '@/api/news'
+import type { NewsItem } from '@/api/news'
 import IconNews from '@/assets/layout/news.svg'
 import ComSender, { AttachmentInfo } from '@/components/sender'
 import { useQuery } from '@/router/hook'
-import { deviceState } from '@/store/device'
 import { industryState } from '@/store/industry'
 import { setPageTransport } from '@/utils'
 import { useMemo, useState, useCallback, useRef, useEffect } from 'react'
@@ -20,7 +19,6 @@ import { transportToChatEnter } from './shared'
 export default function NewChat() {
   const query = useQuery()
   const navigate = useNavigate()
-  const device = useSnapshot(deviceState)
   const industry = useSnapshot(industryState)
 
   // 获取当前行业名称
@@ -51,12 +49,12 @@ export default function NewChat() {
   const [pendingSessionId, setPendingSessionId] = useState<string | null>(null)
   const attachmentPollingRef = useRef<NodeJS.Timeout | null>(null)
 
-  // 热门资讯 - 从行业资讯和招投标获取，只取当月的
+  // 热门资讯 - 从AI 资讯获取，只取当月的
   type HotItem = {
     id: string
     title: string
     content?: string
-    type: 'news' | 'bidding'
+    type: 'news'
     date: string
     source?: string
     category?: string
@@ -67,26 +65,15 @@ export default function NewChat() {
   const [hotList, setHotList] = useState<HotItem[]>([])
   const [newsLoading, setNewsLoading] = useState(true)
 
-  // 获取最近的行业资讯和招投标（最近30天或最新数据）
+  // 获取最近的AI 资讯（最近30天或最新数据）
   useEffect(() => {
     async function fetchHotItems() {
       try {
         setNewsLoading(true)
-        const thirtyDaysAgo = dayjs().subtract(30, 'day')
 
-        // 并行获取资讯和招投标
-        const [newsRes, biddingRes] = await Promise.all([
-          api.news.getNewsList({
-            industry_id: industry.currentIndustryId,
-            limit: 20,
-            offset: 0,
-          }),
-          api.news.getBiddingList({
-            industry_id: industry.currentIndustryId,
-            limit: 20,
-            offset: 0,
-          }),
-        ])
+        const newsRes = await api.news.getNewsList({
+          industry_id: industry.currentIndustryId, limit: 20, offset: 0,
+        })
 
         const items: HotItem[] = []
 
@@ -102,23 +89,6 @@ export default function NewChat() {
               source: n.source,
               category: n.category,
               department: n.department,
-            })
-          })
-        }
-
-        // 获取招投标（API已按时间倒序，直接取最新的）
-        if (biddingRes.success && biddingRes.data) {
-          biddingRes.data.forEach((b: BiddingItem) => {
-            items.push({
-              id: b.id,
-              title: b.title,
-              content: b.content,
-              type: 'bidding',
-              date: b.publish_time || b.collected_at,
-              source: b.source,
-              category: b.notice_type,
-              province: b.province,
-              city: b.city,
             })
           })
         }
@@ -331,16 +301,8 @@ export default function NewChat() {
                 <div className={styles['news-card__title']}>{item.title}</div>
                 <div className={styles['news-card__info']}>
                   <Tag color="blue">
-                    {item.type === 'news'
-                      ? (item.category || '资讯')
-                      : `招标 | ${item.category || '招标公告'}`}
+                    {item.category || 'AI 资讯'}
                   </Tag>
-                  {item.type === 'bidding' && (item.province || item.city) && (
-                    <span className={styles['info-location']}>
-                      <EnvironmentOutlined />
-                      {[item.province, item.city].filter(Boolean).join(' ')}
-                    </span>
-                  )}
                   {item.type === 'news' && item.department && (
                     <span className={styles['info-location']}>
                       <EnvironmentOutlined />
